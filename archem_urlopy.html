@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ARCHEM URLOPY</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef}=React;
+const FIREBASE_URL="https://archem-urlopy-default-rtdb.europe-west1.firebasedatabase.app";
+
+const byLastName=(a,b)=>{
+  const ln=n=>n.trim().split(/\s+/).slice(-1)[0]||"";
+  return ln(a.name).localeCompare(ln(b.name),"pl");
+};
+
+const LS={
+  get:(k,d)=>{try{const r=localStorage.getItem("ar_"+k);return r!==null?JSON.parse(r):d;}catch{return d;}},
+  set:(k,v)=>{try{localStorage.setItem("ar_"+k,JSON.stringify(v));}catch{}}
+};
+const Cloud={
+  ok:()=>FIREBASE_URL!=="",
+  url:()=>FIREBASE_URL.replace(/\/$/,"")+"/archem.json",
+  async load(){try{const r=await fetch(this.url());if(!r.ok)return null;return await r.json();}catch{return null;}},
+  async save(d){try{const r=await fetch(this.url(),{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});return r.ok;}catch{return false;}}
+};
+
+const COLORS=["#6366f1","#8b5cf6","#ec4899","#0ea5e9","#10b981","#f59e0b","#ef4444","#14b8a6","#f97316","#84cc16","#a855f7","#06b6d4","#1e40af","#92400e"];
+const HPD=8;
+const MONTHS=["Styczen","Luty","Marzec","Kwiecien","Maj","Czerwiec","Lipiec","Sierpien","Wrzesien","Pazdziernik","Listopad","Grudzien"];
+const DOWS=["Pn","Wt","Sr","Cz","Pt","Sb","Nd"];
+const MINS_OPTS=[0,15,30,45];
+const HMIN_TYPES=["wypoczynkowy","opieka"];
+
+function easterDate(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day);}
+function getHolidays(y){
+  const e=easterDate(y);
+  const add=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+  const f=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  return{[f(new Date(y,0,1))]:"Nowy Rok",[f(new Date(y,0,6))]:"Trzech Kroli",[f(e)]:"Wielkanoc",[f(add(e,1))]:"Pn. Wielkanocny",[f(new Date(y,4,1))]:"Swieto Pracy",[f(new Date(y,4,3))]:"3 Maja",[f(add(e,49))]:"Zielone Swiatki",[f(add(e,60))]:"Boze Cialo",[f(new Date(y,7,15))]:"Wniebowziecie NMP",[f(new Date(y,10,1))]:"Wszyst. Swietych",[f(new Date(y,10,11))]:"Niepodleglosci",[f(new Date(y,11,25))]:"Boze Narodzenie",[f(new Date(y,11,26))]:"2. dzien BN"};
+}
+function dsStr(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+
+const LEAVE_TYPES=[
+  {id:"wypoczynkowy",label:"Urlop wypoczynkowy",limit:26},
+  {id:"zadanie",label:"Urlop na zadanie",limit:4},
+  {id:"okolicznosciowy",label:"Urlop okolicznosciowy",limit:3},
+  {id:"opieka",label:"Opieka nad dzieckiem",limit:2},
+  {id:"l4",label:"Zwolnienie L4",limit:null},
+  {id:"bezplatny",label:"Urlop bezplatny",limit:null}
+];
+const ROLE_DEFS=[{id:"pracownik",l:"Pracownik"},{id:"przelozony",l:"Przelozony"},{id:"zarzad",l:"Zarzad"},{id:"kadry",l:"Kadry"},{id:"administrator",l:"Admin"}];
+const ST={
+  zlozony:{label:"Zlozony",icon:"⏳",cls:"bg-yellow-100 text-yellow-700"},
+  do_kadr:{label:"Przekazany do kadr",icon:"📋",cls:"bg-blue-100 text-blue-700"},
+  zrealizowany:{label:"Zrealizowany",icon:"✔️",cls:"bg-slate-100 text-slate-500"},
+  odrzucony:{label:"Odrzucony",icon:"❌",cls:"bg-red-100 text-red-700"},
+  anulowany:{label:"Anulowany",icon:"🚫",cls:"bg-slate-100 text-slate-400"}
+};
+
+const DEFAULT_USERS=[
+  {id:"1",name:"Admin System",roles:["administrator"],team:"System",initials:"AS",color:"#334155",password:"admin123",managerIds:[],email:"admin@archem.pl"},
+  {id:"2",name:"Andrzej Mazur",roles:["zarzad"],team:"Zarzad",initials:"AM",color:"#dc2626",password:"zarzad123",managerIds:[],email:"a.mazur@archem.pl"},
+  {id:"3",name:"Tomasz Zajac",roles:["przelozony"],team:"IT",initials:"TZ",color:"#0ea5e9",password:"przel123",managerIds:["2"],email:"t.zajac@archem.pl"},
+  {id:"4",name:"Ewa Kowalczyk",roles:["przelozony","kadry"],team:"Marketing",initials:"EK",color:"#f59e0b",password:"przel456",managerIds:["2"],email:"e.kowalczyk@archem.pl"},
+  {id:"5",name:"Anna Kowalska",roles:["pracownik"],team:"IT",initials:"AK",color:"#6366f1",password:"anna123",managerIds:["3"],email:"a.kowalska@archem.pl"},
+  {id:"6",name:"Piotr Nowak",roles:["pracownik"],team:"IT",initials:"PN",color:"#8b5cf6",password:"piotr123",managerIds:["3"],email:"p.nowak@archem.pl"},
+  {id:"7",name:"Marta Wisniewska",roles:["pracownik"],team:"Marketing",initials:"MW",color:"#ec4899",password:"marta123",managerIds:["4"],email:"m.wisniewska@archem.pl"},
+  {id:"8",name:"Karolina Dabrowska",roles:["kadry"],team:"HR",initials:"KD",color:"#10b981",password:"kadry123",managerIds:["2"],email:"k.dabrowska@archem.pl"}
+];
+const mkLimits=()=>({wypoczynkowy:{total:26,used:0},zadanie:{total:4,used:0},okolicznosciowy:{total:3,used:0},opieka:{total:2,used:0},l4:{total:0,used:0},bezplatny:{total:0,used:0}});
+const DEFAULT_LIMITS={
+  "2":mkLimits(),
+  "3":{wypoczynkowy:{total:26,used:8},zadanie:{total:4,used:0},okolicznosciowy:{total:3,used:0},opieka:{total:2,used:0},l4:{total:0,used:0},bezplatny:{total:0,used:0}},
+  "4":{wypoczynkowy:{total:26,used:2},zadanie:{total:4,used:0},okolicznosciowy:{total:3,used:0},opieka:{total:2,used:0},l4:{total:0,used:0},bezplatny:{total:0,used:0}},
+  "5":{wypoczynkowy:{total:26,used:3},zadanie:{total:4,used:0},okolicznosciowy:{total:3,used:0},opieka:{total:2,used:0},l4:{total:0,used:0},bezplatny:{total:0,used:0}},
+  "6":{wypoczynkowy:{total:26,used:5},zadanie:{total:4,used:1},okolicznosciowy:{total:3,used:0},opieka:{total:2,used:0},l4:{total:5,used:4},bezplatny:{total:0,used:0}},
+  "7":{wypoczynkowy:{total:26,used:0},zadanie:{total:4,used:0},okolicznosciowy:{total:3,used:2},opieka:{total:2,used:0},l4:{total:0,used:0},bezplatny:{total:0,used:0}},
+  "8":{wypoczynkowy:{total:26,used:2},zadanie:{total:4,used:0},okolicznosciowy:{total:3,used:0},opieka:{total:2,used:0},l4:{total:0,used:0},bezplatny:{total:0,used:0}}
+};
+const DEFAULT_REQS=[
+  {id:"r1",userId:"5",type:"wypoczynkowy",dateFrom:"2026-04-21",dateTo:"2026-04-25",days:5,hrs:null,mins:null,reason:"Urlop wiosenny",status:"zlozony",createdAt:"2026-04-10",mgrCmt:"",mgrId:null},
+  {id:"r2",userId:"6",type:"l4",dateFrom:"2026-04-07",dateTo:"2026-04-10",days:4,hrs:null,mins:null,reason:"Przeziebienie",status:"do_kadr",createdAt:"2026-04-07",mgrCmt:"Zaakceptowane",mgrId:"3"},
+  {id:"r4",userId:"5",type:"okolicznosciowy",dateFrom:"2026-03-10",dateTo:"2026-03-11",days:2,hrs:null,mins:null,reason:"Slub siostry",status:"zrealizowany",createdAt:"2026-03-01",mgrCmt:"Gratulacje!",mgrId:"3"}
+];
+
+const todayStr=()=>new Date().toISOString().split("T")[0];
+const fmtDate=s=>s?new Date(s).toLocaleDateString("pl-PL",{day:"2-digit",month:"2-digit",year:"numeric"}):"";
+const getInit=n=>n.trim().split(/\s+/).map(w=>w[0]).join("").toUpperCase().slice(0,2);
+const pickClr=us=>{const u=us.map(x=>x.color);return COLORS.find(c=>!u.includes(c))||COLORS[us.length%COLORS.length];};
+const getLT=id=>LEAVE_TYPES.find(l=>l.id===id);
+const getRoles=u=>(u&&Array.isArray(u.roles))?u.roles:(u&&u.role?[u.role]:[]);
+const hasR=(u,r)=>getRoles(u).includes(r);
+const isMgr=u=>hasR(u,"przelozony")||hasR(u,"zarzad")||hasR(u,"administrator");
+const isKadry=u=>hasR(u,"kadry");
+const initSt=u=>(u.managerIds||[]).filter(Boolean).length?"zlozony":"do_kadr";
+
+function workdays(a,b){
+  if(!a||!b)return 0;
+  let c=0,d=new Date(a),e=new Date(b);
+  const h={};
+  for(let y=d.getFullYear();y<=e.getFullYear();y++)Object.assign(h,getHolidays(y));
+  while(d<=e){const w=d.getDay(),ds=dsStr(d);if(w!==0&&w!==6&&!h[ds])c++;d.setDate(d.getDate()+1);}
+  return c;
+}
+function fmtDur(r){if(r.hrs!=null){const m=r.mins||0;return m>0?r.hrs+"g "+m+"min":r.hrs+"g";}return r.days+" "+(r.days===1?"dzien":"dni");}
+function calcDeduct(r){if(r.hrs!=null)return(r.hrs+(r.mins||0)/60)/HPD;return r.days||0;}
+function daysToHM(days){if(!days&&days!==0)return "0g";const tm=Math.round(days*HPD*60),h=Math.floor(tm/60),m=tm%60;return m>0?h+"g "+m+"min":h+"g";}
+function toPartsHM(td){const tm=Math.round(td*HPD*60),d=Math.floor(tm/(HPD*60)),r=tm%(HPD*60),h=Math.floor(r/60),m=r%60;return{d,h,m};}
+function fromPartsHM(d,h,m){return d+h/HPD+m/(HPD*60);}
+function getMgrQueue(reqs,users,mgr){return reqs.filter(r=>r.status==="zlozony"&&(users.find(u=>u.id===r.userId)?.managerIds||[]).includes(mgr.id));}
+function getMgrHist(reqs,users,mgr){return reqs.filter(r=>{if(!["odrzucony","do_kadr","zrealizowany","anulowany"].includes(r.status))return false;const sub=users.find(u=>u.id===r.userId);return r.mgrId===mgr.id||(sub?.managerIds||[]).includes(mgr.id);});}
+function buildMailto(emails,subject,lines){const to=emails.filter(Boolean).join(",");if(!to)return null;return "mailto:"+to+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(lines.map(l=>l==null?"":l).join("\r\n"));}
+function mailToMgr(req,emp,managers){const lt=getLT(req.type);const dur=req.hrs?req.hrs+"g":req.days+" dni";const subj="ARCHEM URLOPY - Wniosek: "+emp.name;return{href:buildMailto(managers.map(m=>m.email||""),subj,["Dzien dobry,","","Pracownik "+emp.name+" zlozyl/a wniosek.","","Rodzaj: "+(lt?lt.label:""),"Od: "+fmtDate(req.dateFrom)+"  Do: "+fmtDate(req.dateTo),"Czas: "+dur,req.reason?"Uzasadnienie: "+req.reason:null,"","System ARCHEM URLOPY"]),subj,to:managers.map(m=>m.name).join(", ")};}
+function mailToKadry(req,emp,approver,klist){const lt=getLT(req.type);const dur=req.hrs?req.hrs+"g":req.days+" dni";const subj="ARCHEM URLOPY - Zatwierdzony wniosek: "+emp.name;return{href:buildMailto(klist.map(k=>k.email||""),subj,["Dzien dobry,","","Wniosek zatwierdzony.","","Pracownik: "+emp.name,"Rodzaj: "+(lt?lt.label:""),"Od: "+fmtDate(req.dateFrom)+"  Do: "+fmtDate(req.dateTo),"Czas: "+dur,"Zatwierdzil: "+approver.name,req.mgrCmt?"Komentarz: "+req.mgrCmt:null,"","System ARCHEM URLOPY"]),subj,to:klist.map(k=>k.name).join(", ")};}
+function mailToEmp(req,emp,approver,approved){const lt=getLT(req.type);const dur=req.hrs?req.hrs+"g":req.days+" dni";const subj="ARCHEM URLOPY - Wniosek "+(approved?"ZATWIERDZONY":"ODRZUCONY");return{href:buildMailto([emp.email||""],subj,["Dzien dobry "+emp.name+",","","Twoj wniosek zostal "+(approved?"zatwierdzony.":"odrzucony."),"","Rodzaj: "+(lt?lt.label:""),"Od: "+fmtDate(req.dateFrom)+"  Do: "+fmtDate(req.dateTo),"Czas: "+dur,req.mgrCmt?"Komentarz: "+req.mgrCmt:null,"",approver.name+" / ARCHEM URLOPY"]),subj,to:emp.name};}
+
+function defaultTab(u){if(isKadry(u))return "przekazane";if(isMgr(u))return "akceptacje";return "wnioski";}
+
+// ─────────────────────────────────────────────────────────────────────
+// APP
+// ─────────────────────────────────────────────────────────────────────
+function App(){
+  const [users,  setUsersS] =useState(DEFAULT_USERS);
+  const [reqs,   setReqsS]  =useState(DEFAULT_REQS);
+  const [lims,   setLimsS]  =useState(DEFAULT_LIMITS);
+  const [notifs, setNotifsS]=useState([]);
+  const [uwagi,  setUwagiS] =useState([]);
+  const [loading,setLoad]   =useState(true);
+  const [user,   setUser]   =useState(null);
+  const [tab,    setTab]    =useState("wnioski");
+  const [toast,  setToast]  =useState(null);
+  const [mail,   setMail]   =useState(null);
+  const [syncSt, setSyncSt] =useState("syncing");
+  const ref=useRef({users:DEFAULT_USERS,reqs:DEFAULT_REQS,lims:DEFAULT_LIMITS,notifs:[],uwagi:[]});
+  const lastSave=useRef(0);
+
+  useEffect(()=>{
+    if(!Cloud.ok()){
+      const u=LS.get("users",DEFAULT_USERS),r=LS.get("reqs",DEFAULT_REQS),l=LS.get("lims",DEFAULT_LIMITS),n=LS.get("notifs",[]),w=LS.get("uwagi",[]);
+      setUsersS(u);setReqsS(r);setLimsS(l);setNotifsS(n);setUwagiS(w);
+      ref.current={users:u,reqs:r,lims:l,notifs:n,uwagi:w};setSyncSt("local");setLoad(false);return;
+    }
+    Cloud.load().then(data=>{
+      if(data&&data.users&&Array.isArray(data.users)&&data.users.length>0){
+        const lr=Array.isArray(data.reqs)?data.reqs:[];
+        const ll=(data.lims&&typeof data.lims==="object")?data.lims:DEFAULT_LIMITS;
+        const ln=Array.isArray(data.notifs)?data.notifs:[];
+        const lw=Array.isArray(data.uwagi)?data.uwagi:[];
+        setUsersS(data.users);setReqsS(lr);setLimsS(ll);setNotifsS(ln);setUwagiS(lw);
+        ref.current={users:data.users,reqs:lr,lims:ll,notifs:ln,uwagi:lw};setSyncSt("ok");
+      }else{
+        const d0={users:DEFAULT_USERS,reqs:DEFAULT_REQS,lims:DEFAULT_LIMITS,notifs:[],uwagi:[]};
+        ref.current=d0;setUsersS(d0.users);setReqsS(d0.reqs);setLimsS(d0.lims);setNotifsS(d0.notifs);setUwagiS(d0.uwagi);
+        Cloud.save(d0).then(ok=>setSyncSt(ok?"ok":"error"));
+      }
+      setLoad(false);
+    }).catch(()=>{
+      const u=LS.get("users",DEFAULT_USERS),r=LS.get("reqs",DEFAULT_REQS),l=LS.get("lims",DEFAULT_LIMITS),n=LS.get("notifs",[]),w=LS.get("uwagi",[]);
+      setUsersS(u);setReqsS(r);setLimsS(l);setNotifsS(n);setUwagiS(w);
+      ref.current={users:u,reqs:r,lims:l,notifs:n,uwagi:w};setSyncSt("error");setLoad(false);
+    });
+  },[]);
+
+  useEffect(()=>{
+    if(!Cloud.ok()||!user)return;
+    async function refresh(){
+      if(Date.now()-lastSave.current<5000)return;
+      try{
+        const data=await Cloud.load();if(!data)return;
+        const cr=Array.isArray(data.reqs)?data.reqs:[];const cu=Array.isArray(data.users)?data.users:ref.current.users;
+        const cl=(data.lims&&typeof data.lims==="object")?data.lims:ref.current.lims;
+        const cn=Array.isArray(data.notifs)?data.notifs:[];const cw=Array.isArray(data.uwagi)?data.uwagi:[];
+        if(JSON.stringify(ref.current.reqs)!==JSON.stringify(cr)){setReqsS(cr);ref.current.reqs=cr;LS.set("reqs",cr);}
+        if(JSON.stringify(ref.current.users)!==JSON.stringify(cu)){setUsersS(cu);ref.current.users=cu;LS.set("users",cu);}
+        if(JSON.stringify(ref.current.lims)!==JSON.stringify(cl)){setLimsS(cl);ref.current.lims=cl;LS.set("lims",cl);}
+        if(JSON.stringify(ref.current.notifs)!==JSON.stringify(cn)){setNotifsS(cn);ref.current.notifs=cn;LS.set("notifs",cn);}
+        if(JSON.stringify(ref.current.uwagi)!==JSON.stringify(cw)){setUwagiS(cw);ref.current.uwagi=cw;LS.set("uwagi",cw);}
+        setSyncSt("ok");
+      }catch(e){}
+    }
+    const iv=setInterval(refresh,15000);
+    return()=>clearInterval(iv);
+  },[user]);
+
+  function push(u,r,l,n,w){
+    ref.current={users:u,reqs:r,lims:l,notifs:n,uwagi:w};
+    LS.set("users",u);LS.set("reqs",r);LS.set("lims",l);LS.set("notifs",n);LS.set("uwagi",w);
+    if(!Cloud.ok()){setSyncSt("local");return;}
+    setSyncSt("syncing");lastSave.current=Date.now();
+    Cloud.save({users:u,reqs:r,lims:l,notifs:n,uwagi:w}).then(ok=>{setSyncSt(ok?"ok":"error");if(ok)lastSave.current=Date.now();});
+  }
+  const setUsers=v=>{setUsersS(v);push(v,ref.current.reqs,ref.current.lims,ref.current.notifs,ref.current.uwagi);};
+  const setReqs=v=>{setReqsS(v);push(ref.current.users,v,ref.current.lims,ref.current.notifs,ref.current.uwagi);};
+  const setLims=v=>{setLimsS(v);push(ref.current.users,ref.current.reqs,v,ref.current.notifs,ref.current.uwagi);};
+  const setNotifs=v=>{setNotifsS(v);push(ref.current.users,ref.current.reqs,ref.current.lims,v,ref.current.uwagi);};
+  const setUwagi=v=>{setUwagiS(v);push(ref.current.users,ref.current.reqs,ref.current.lims,ref.current.notifs,v);};
+
+  const notify=(msg,t)=>{setToast({msg,t:t||"ok"});setTimeout(()=>setToast(null),3000);};
+  const patch=(upd,msg)=>{const nr=ref.current.reqs.map(r=>r.id===upd.id?upd:r);setReqs(nr);if(msg)notify(msg);};
+  const delReq=rid=>{setReqs(ref.current.reqs.filter(r=>r.id!==rid));notify("Wpis usuniety");};
+
+  const cancelLeave=req=>{
+    const nr=ref.current.reqs.map(r=>r.id===req.id?{...req,status:"anulowany"}:r);setReqs(nr);notify("Urlop anulowany");
+    const lt=getLT(req.type);
+    if(lt&&ref.current.lims[req.userId]?.[req.type]){
+      const nl=JSON.parse(JSON.stringify(ref.current.lims));
+      nl[req.userId][req.type].used=Math.max(0,parseFloat(((nl[req.userId][req.type].used||0)-calcDeduct(req)).toFixed(4)));
+      setLims(nl);
+    }
+  };
+
+  function addNotif(userId,msg,reqId){
+    const nn=[...ref.current.notifs,{id:"n"+Date.now(),userId,msg,reqId,read:false,createdAt:todayStr()}];
+    setNotifsS(nn);push(ref.current.users,ref.current.reqs,ref.current.lims,nn,ref.current.uwagi);
+  }
+
+  function onReqSaved(req){
+    const allU=ref.current.users;const emp=allU.find(u=>u.id===req.userId);
+    const mgrs=(emp?.managerIds||[]).map(mid=>allU.find(u=>u.id===mid)).filter(Boolean);
+    if(emp&&mgrs.length>0)setMail({items:[mailToMgr(req,emp,mgrs)],label:"Powiadom przelozonego"});
+  }
+  function onMgrDecision(req,approved){
+    const allU=ref.current.users;const emp=allU.find(u=>u.id===req.userId);
+    const kl=allU.filter(u=>isKadry(u));const items=[];
+    if(approved&&emp&&kl.length>0)items.push(mailToKadry(req,emp,user,kl));
+    if(emp)items.push(mailToEmp(req,emp,user,approved));
+    if(items.length>0)setMail({items,label:approved?"Wyslij powiadomienia":"Powiadom pracownika"});
+    if(emp){
+      const lt=getLT(req.type);
+      const msg=approved
+        ?"Twoj wniosek ("+(lt?lt.label:req.type)+", "+fmtDate(req.dateFrom)+(req.dateTo!==req.dateFrom?" - "+fmtDate(req.dateTo):"")+"): zostal ZATWIERDZONY"+(req.mgrCmt?" · Komentarz: "+req.mgrCmt:"")
+        :"Twoj wniosek ("+(lt?lt.label:req.type)+", "+fmtDate(req.dateFrom)+"): zostal ODRZUCONY"+(req.mgrCmt?" · Komentarz: "+req.mgrCmt:"");
+      addNotif(emp.id,msg,req.id);
+    }
+  }
+
+  function submitUwaga(text){
+    const admins=ref.current.users.filter(u=>hasR(u,"administrator"));
+    const newU={id:"uw"+Date.now(),userId:user.id,text,createdAt:todayStr(),readByAdmin:false};
+    const nw=[newU,...ref.current.uwagi];
+    setUwagiS(nw);
+    let nn=[...ref.current.notifs];
+    admins.forEach(adm=>{
+      nn.push({id:"n"+Date.now()+"x"+adm.id,userId:adm.id,msg:"Nowa uwaga od "+user.name+": "+text.slice(0,60)+(text.length>60?"...":""),reqId:null,read:false,createdAt:todayStr()});
+    });
+    setNotifsS(nn);
+    push(ref.current.users,ref.current.reqs,ref.current.lims,nn,nw);
+    notify("Uwaga wyslana!");
+  }
+  function markUwagiRead(ids){const nw=ref.current.uwagi.map(w=>ids.includes(w.id)?{...w,readByAdmin:true}:w);setUwagi(nw);}
+  function deleteUwaga(id){setUwagi(ref.current.uwagi.filter(w=>w.id!==id));notify("Usunieto uwage");}
+
+  const login=u=>{setUser(u);setTab(defaultTab(u));};
+  if(loading)return(<div className="min-h-screen flex flex-col items-center justify-center gap-3 text-slate-400"><div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"/><div className="text-sm">Ladowanie danych...</div></div>);
+  if(!user)return <Login users={users} onLogin={login}/>;
+
+  const mgrBadge=isMgr(user)?getMgrQueue(reqs,users,user).length:0;
+  const hrBadge=isKadry(user)?reqs.filter(r=>r.status==="do_kadr").length:0;
+  const myUnread=notifs.filter(n=>n.userId===user.id&&!n.read).length;
+  const uwagiBadge=hasR(user,"administrator")?uwagi.filter(w=>!w.readByAdmin).length:0;
+  const canDel=hasR(user,"administrator")||hasR(user,"kadry")||hasR(user,"zarzad");
+  const syncColors={ok:"bg-green-400",error:"bg-red-400",syncing:"bg-amber-400",local:"bg-slate-300"};
+  const syncLabels={ok:"Zsynchronizowano",error:"Blad synchronizacji",syncing:"Zapisywanie...",local:"Tylko lokalnie"};
+
+  const navItems=[];
+  navItems.push({id:"wnioski",l:"Moje wnioski",i:"📄",badge:myUnread});
+  navItems.push({id:"nowy",l:"Nowy wniosek",i:"➕"});
+  if(isMgr(user)){navItems.push({id:"akceptacje",l:"Do akceptacji",i:"✅",badge:mgrBadge});navItems.push({id:"hist_mgr",l:"Historia decyzji",i:"📝"});}
+  if(hasR(user,"kadry")){navItems.push({id:"przekazane",l:"Przekazane",i:"📋",badge:hrBadge});navItems.push({id:"zarzadzanie",l:"Zarzadzanie",i:"⚙️"});}
+  if(hasR(user,"kadry")||hasR(user,"administrator"))navItems.push({id:"pracownicy",l:"Pracownicy",i:"👥"});
+  if(hasR(user,"kadry")||hasR(user,"zarzad")||hasR(user,"administrator"))navItems.push({id:"wnioski_all",l:"Wszystkie wnioski",i:"📄"});
+  if(hasR(user,"administrator"))navItems.push({id:"limity_all",l:"Limity",i:"📊"});
+  navItems.push({id:"kalendarz",l:"Kalendarz",i:"📅"});
+  navItems.push({id:"uwagi",l:"Uwagi",i:"💬",badge:uwagiBadge});
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 bg-blue-700 rounded-lg flex items-center justify-center text-white font-bold text-xs">AR</div>
+          <div><div className="font-bold text-sm text-blue-700 leading-none">ARCHEM</div><div className="text-xs text-slate-400 leading-none tracking-widest">URLOPY</div></div>
+          <div className="flex items-center gap-1.5 ml-2"><div className={"w-2 h-2 rounded-full "+syncColors[syncSt]}/><span className="text-xs text-slate-400 hidden sm:block">{syncLabels[syncSt]}</span></div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:block text-right"><div className="text-xs font-medium text-slate-700">{user.name}</div><div className="text-xs text-slate-400">{getRoles(user).join(" / ")}</div></div>
+          <Av u={user} sz={32}/>
+          <button onClick={()=>setUser(null)} className="text-xs text-slate-400 hover:text-slate-600">Wyloguj</button>
+        </div>
+      </header>
+
+      {toast&&<div className={"fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white "+(toast.t==="ok"?"bg-green-500":"bg-red-500")}>{toast.msg}</div>}
+
+      {mail&&(
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center gap-3 mb-4"><div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-2xl">✉️</div><div><h3 className="font-semibold text-slate-700">{mail.label}</h3><p className="text-xs text-slate-400">Kliknij aby otworzyc klienta pocztowego</p></div></div>
+            <div className="space-y-2 mb-4">{mail.items.map((m,i)=><MailBtn key={i} item={m}/>)}</div>
+            <button onClick={()=>setMail(null)} className="w-full border border-slate-200 text-slate-500 text-sm font-medium py-2.5 rounded-xl hover:bg-slate-50">Pomin</button>
+          </div>
+        </div>
+      )}
+
+      <nav className="bg-white border-b border-slate-200 px-3 flex overflow-x-auto">
+        {navItems.map(n=>{
+          const bVal=n.badge||0;
+          return (
+            <button key={n.id} onClick={()=>setTab(n.id)} className={"relative px-3 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors "+(tab===n.id?"border-blue-600 text-blue-600":"border-transparent text-slate-500 hover:text-slate-700")}>
+              {n.i} {n.l}
+              {bVal>0&&<span className="absolute top-2 right-0.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center leading-none">{bVal}</span>}
+            </button>
+          );
+        })}
+      </nav>
+
+      <main className="flex-1 p-4 max-w-4xl mx-auto w-full">
+        {tab==="wnioski"&&(
+          <MyReqs user={user} reqs={reqs} users={users} lims={lims} notifs={notifs} onCancel={cancelLeave}
+            onDeleteReq={rid=>{setReqs(ref.current.reqs.filter(r=>r.id!==rid));notify("Wniosek usuniety");}}
+            onDeleteNotif={nid=>{const nn=ref.current.notifs.filter(n=>n.id!==nid);setNotifs(nn);}}
+            onReadNotifs={()=>{const nn=ref.current.notifs.map(n=>n.userId===user.id?{...n,read:true}:n);setNotifs(nn);}}
+          />
+        )}
+        {tab==="nowy"&&(
+          <NewReq user={user} lims={lims} users={users} onSave={req=>{
+            const nr=[req,...ref.current.reqs];
+            const lt=getLT(req.type);let nl=ref.current.lims;
+            if(lt){nl=JSON.parse(JSON.stringify(ref.current.lims));if(!nl[req.userId])nl[req.userId]=mkLimits();if(!nl[req.userId][req.type])nl[req.userId][req.type]={total:0,used:0};nl[req.userId][req.type].used=parseFloat(((nl[req.userId][req.type].used||0)+calcDeduct(req)).toFixed(4));}
+            setReqsS(nr);setLimsS(nl);push(ref.current.users,nr,nl,ref.current.notifs,ref.current.uwagi);
+            setTab("wnioski");notify("Wniosek zlozony!");onReqSaved(req);
+          }}/>
+        )}
+        {tab==="akceptacje"&&<ApprovalPanel user={user} reqs={reqs} users={users} patch={patch} notify={notify} onDecision={onMgrDecision}/>}
+        {tab==="hist_mgr"&&<MgrHistory user={user} reqs={reqs} users={users} onDelete={delReq}/>}
+        {tab==="przekazane"&&<HRPanel reqs={reqs} users={users} onUpdate={r=>{if(r._del){setReqs(ref.current.reqs.filter(x=>x.id!==r.id));notify("Wpis usuniety");}else patch(r,"Zaktualizowano");}}/>}
+        {tab==="zarzadzanie"&&<ManagePanel reqs={reqs} users={users} lims={lims} onCancel={cancelLeave} onSaveLims={nl=>{setLims(nl);notify("Limity zapisane");}}/>}
+        {tab==="pracownicy"&&(
+          <PeopleManager users={users} lims={lims} currentId={user.id}
+            onAdd={nu=>{const nu2=[...ref.current.users,nu];const nl={...ref.current.lims,[nu.id]:mkLimits()};setUsers(nu2);setLims(nl);notify("Dodano: "+nu.name);}}
+            onEdit={eu=>{setUsers(ref.current.users.map(u=>u.id===eu.id?eu:u));if(user.id===eu.id)setUser(eu);notify("Zaktualizowano");}}
+            onDelete={uid=>{const nl={...ref.current.lims};delete nl[uid];setUsers(ref.current.users.filter(u=>u.id!==uid));setLims(nl);notify("Usunieto");}}
+          />
+        )}
+        {tab==="wnioski_all"&&<AllReqs reqs={reqs} users={users} canDelete={canDel} onDelete={delReq}/>}
+        {tab==="limity_all"&&<ManagePanel reqs={reqs} users={users} lims={lims} onCancel={cancelLeave} onSaveLims={nl=>{setLims(nl);notify("Limity zapisane");}}/>}
+        {tab==="kalendarz"&&<TeamCal reqs={reqs} users={users}/>}
+        {tab==="uwagi"&&<UwagiPanel user={user} users={users} uwagi={uwagi} onSubmit={submitUwaga} onMarkRead={markUwagiRead} onDelete={deleteUwaga}/>}
+      </main>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// LOGIN
+// ─────────────────────────────────────────────────────────────────────
+function Login({users,onLogin}){
+  const [sel,setSel]=useState("");const [pw,setPw]=useState("");const [err,setErr]=useState("");const [show,setShow]=useState(false);
+  const sorted=[...users].sort(byLastName);
+  const su=users.find(u=>u.id===sel);
+  function go(){if(!su){setErr("Wybierz uzytkownika.");return;}if(pw===(su.password||""))onLogin(su);else setErr("Nieprawidlowe haslo.");}
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
+        <div className="flex items-center gap-3 mb-6"><div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center text-white font-bold text-lg">AR</div><div><h1 className="text-xl font-bold text-blue-700">ARCHEM</h1><p className="text-sm font-medium tracking-widest text-slate-400">URLOPY</p></div></div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1.5">Uzytkownik</label>
+            <select value={sel} onChange={e=>{setSel(e.target.value);setPw("");setErr("");setShow(false);}} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400">
+              <option value="">-- wybierz konto --</option>
+              {sorted.map(u=><option key={u.id} value={u.id}>{u.name} ({getRoles(u).join("/")})</option>)}
+            </select>
+          </div>
+          {su&&(
+            <div>
+              <div className="flex justify-between mb-1.5"><label className="text-xs font-medium text-slate-500">Haslo</label><button onClick={()=>setShow(v=>!v)} className="text-xs text-blue-500">{show?"Ukryj":"Pokaz haslo"}</button></div>
+              <input type={show?"text":"password"} value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} autoFocus placeholder="Wpisz haslo..." className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400"/>
+              {show&&su.password&&<div className="mt-1.5 text-xs bg-green-50 border border-green-200 rounded px-3 py-1.5 text-green-700">Haslo: <strong>{su.password}</strong></div>}
+            </div>
+          )}
+          {err&&<div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">{err}</div>}
+          <button onClick={go} disabled={!sel} className="w-full bg-blue-700 hover:bg-blue-800 disabled:opacity-40 text-white font-medium py-2.5 rounded-xl text-sm transition-colors">Zaloguj sie</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MailBtn({item}){if(!item?.href)return null;return(<button onClick={()=>{window.location.href=item.href;}} className="flex items-center gap-3 p-3 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 transition-colors text-left w-full"><span className="text-xl flex-shrink-0">📧</span><div className="flex-1 min-w-0"><div className="text-sm font-medium text-blue-700 truncate">{item.subj}</div><div className="text-xs text-blue-500">Do: {item.to}</div></div><span className="text-xs font-semibold text-white bg-blue-600 px-3 py-1.5 rounded-lg flex-shrink-0">Otworz</span></button>);}
+
+// ─────────────────────────────────────────────────────────────────────
+// MY REQS
+// ─────────────────────────────────────────────────────────────────────
+function MyReqs({user,reqs,users,lims,notifs,onCancel,onReadNotifs,onDeleteNotif,onDeleteReq}){
+  const mine=reqs.filter(r=>r.userId===user.id);
+  const ul=lims[user.id]||{};
+  const myNotifs=notifs.filter(n=>n.userId===user.id).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  useEffect(()=>{if(myNotifs.filter(n=>!n.read).length>0)onReadNotifs();},[]);
+  return (
+    <div>
+      {myNotifs.length>0&&(
+        <div className="mb-5">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-semibold text-slate-600">Powiadomienia</h2>
+            <button onClick={()=>myNotifs.forEach(n=>onDeleteNotif(n.id))} className="text-xs text-slate-400 hover:text-red-500 underline">Usun wszystkie</button>
+          </div>
+          <div className="space-y-2">
+            {myNotifs.map(n=>(
+              <div key={n.id} className={"flex items-start gap-3 p-3 rounded-xl border text-sm "+(n.read?"border-slate-200 bg-white text-slate-500":"border-blue-300 bg-blue-50 text-slate-700")}>
+                <span className="text-base flex-shrink-0 mt-0.5">{n.msg.includes("ZATWIERDZONY")?"✅":n.msg.includes("ODRZUCONY")?"❌":"🔔"}</span>
+                <div className="flex-1 min-w-0"><div className="text-xs leading-relaxed">{n.msg}</div><div className="text-xs text-slate-400 mt-0.5">{fmtDate(n.createdAt)}</div></div>
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  {!n.read&&<span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded-full">Nowe</span>}
+                  <button onClick={()=>onDeleteNotif(n.id)} className="text-xs text-slate-300 hover:text-red-500 font-bold">✕</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        {LEAVE_TYPES.filter(lt=>lt.limit).map(lt=>{
+          const lim=ul[lt.id]||{total:lt.limit,used:0};
+          const leftDays=parseFloat((lim.total-lim.used).toFixed(2));
+          const pct=Math.min(100,lim.total>0?(lim.used/lim.total)*100:0);
+          return (
+            <div key={lt.id} className="bg-white rounded-xl p-3 border border-slate-200">
+              <div className="text-xs text-slate-400 mb-1 leading-tight">{lt.label}</div>
+              <div className="text-xl font-bold text-slate-700">{leftDays} <span className="text-sm font-normal text-slate-400">dni</span></div>
+              <div className="text-xs text-blue-600 font-medium">{daysToHM(leftDays)}</div>
+              <div className="text-xs text-slate-400 mb-2">z {lim.total} dni ({daysToHM(lim.total)})</div>
+              <div className="h-1.5 bg-slate-100 rounded-full"><div className="h-full bg-blue-500 rounded-full" style={{width:pct+"%"}}/></div>
+            </div>
+          );
+        })}
+      </div>
+      <h2 className="text-sm font-semibold text-slate-600 mb-2">Moje wnioski</h2>
+      {mine.length===0
+        ? <Empty msg="Brak wnioskow"/>
+        : <div className="space-y-2">{mine.map(r=><RCard key={r.id} req={r} users={users} onCancel={r.status==="zlozony"?onCancel:null} onDelete={()=>onDeleteReq(r.id)}/>)}</div>
+      }
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CAL PICKER
+// ─────────────────────────────────────────────────────────────────────
+function CalPicker({from,to,onSelect,single=false}){
+  const now=new Date();
+  const [yr,setYr]=useState(()=>from?new Date(from).getFullYear():now.getFullYear());
+  const [mo,setMo]=useState(()=>from?new Date(from).getMonth():now.getMonth());
+  const [hov,setHov]=useState(null);
+  const first=new Date(yr,mo,1),total=new Date(yr,mo+1,0).getDate(),startDow=(first.getDay()+6)%7;
+  const holidays=getHolidays(yr);
+  const cells=[...Array(startDow).fill(null),...Array.from({length:total},(_,i)=>i+1)];
+  const todS=todayStr();
+  function ds(d){return yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");}
+  function click(d){
+    const s=ds(d);if(s<todS)return;
+    if(single){onSelect(s);return;}
+    if(!from||(from&&to)){onSelect(s,null);}
+    else{if(s<from)onSelect(s,from);else onSelect(from,s);}
+  }
+  function inRange(s){if(!from)return false;const end=to||hov;if(!end)return false;const lo=from<end?from:end,hi=from<end?end:from;return s>lo&&s<hi;}
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-3 select-none">
+      <div className="flex items-center justify-between mb-2">
+        <button onClick={()=>{if(mo===0){setYr(y=>y-1);setMo(11);}else setMo(m=>m-1);}} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500">◀</button>
+        <span className="text-sm font-semibold text-slate-700">{MONTHS[mo]} {yr}</span>
+        <button onClick={()=>{if(mo===11){setYr(y=>y+1);setMo(0);}else setMo(m=>m+1);}} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500">▶</button>
+      </div>
+      <div className="flex gap-3 mb-2 flex-wrap" style={{fontSize:"10px",color:"#94a3b8"}}>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-red-100 border border-red-200"/>Swieto PL</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-slate-100"/>Weekend</span>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 mb-1">
+        {DOWS.map(d=><div key={d} style={{fontSize:"10px"}} className={"text-center py-0.5 font-semibold "+(d==="Sb"||d==="Nd"?"text-slate-300":"text-slate-400")}>{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {cells.map((d,i)=>{
+          if(!d)return <div key={i}/>;
+          const s=ds(d),dow=(startDow+d-1)%7,isWe=dow>=5,holiday=holidays[s],isPast=s<todS;
+          const isFrom=s===from,isTo=s===to,inR=inRange(s),isToday=s===todS;
+          let bg,txt,cur="cursor-pointer";
+          if(isPast){bg="bg-white";txt="text-slate-200";cur="cursor-default";}
+          else if(isFrom||isTo){bg="bg-blue-600";txt="text-white";}
+          else if(inR){bg="bg-blue-100";txt="text-blue-700";}
+          else if(holiday){bg="bg-red-50 hover:bg-red-100";txt="text-red-500";}
+          else if(isWe){bg="bg-slate-50";txt="text-slate-300";}
+          else{bg="bg-white hover:bg-blue-50";txt="text-slate-700";}
+          return (
+            <div key={i} title={holiday||""} className={`rounded border ${isToday&&!isFrom&&!isTo?"border-blue-300":"border-transparent"} ${bg} ${cur} p-0.5`}
+              onClick={()=>click(d)} onMouseEnter={()=>!isPast&&!to&&from&&setHov(s)} onMouseLeave={()=>setHov(null)}>
+              <div className={`text-center font-medium ${txt}`} style={{fontSize:"11px"}}>{d}</div>
+              {holiday&&<div className="text-red-400 leading-tight truncate text-center" style={{fontSize:"7px"}}>{holiday.split(" ")[0]}</div>}
+            </div>
+          );
+        })}
+      </div>
+      {!single&&from&&!to&&<div className="text-xs text-amber-500 text-center mt-2">▸ Kliknij date koncowa</div>}
+      {!single&&from&&to&&<div className="text-xs text-blue-600 text-center mt-2 font-medium">{fmtDate(from)} → {fmtDate(to)} · <strong>{workdays(from,to)}</strong> dni roboczych</div>}
+      {single&&from&&<div className="text-xs text-blue-600 text-center mt-2 font-medium">{fmtDate(from)}</div>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// NEW REQ
+// ─────────────────────────────────────────────────────────────────────
+function NewReq({user,lims,users,onSave}){
+  const [type,setType]=useState("wypoczynkowy");
+  const [unit,setUnit]=useState("days");
+  const [from,setFrom]=useState("");const [to,setTo]=useState("");
+  const [hrs,setHrs]=useState(1);const [mins,setMins]=useState(0);
+  const [reason,setReason]=useState("");const [err,setErr]=useState("");
+  const ul=lims[user.id]||{};const lt=getLT(type);
+  const limEntry=ul[type]||{total:lt?.limit||0,used:0};
+  const hasLimit=lt&&(lt.limit!=null||limEntry.total>0);
+  const left=hasLimit?parseFloat((limEntry.total-limEntry.used).toFixed(4)):null;
+  const days=(unit==="days"&&from&&to)?workdays(from,to):0;
+  const equiv=unit==="hours"?(hrs+(mins||0)/60)/HPD:days;
+  const over=left!==null&&left>0&&equiv>left;
+  const managers=(user.managerIds||[]).map(mid=>users.find(u=>u.id===mid)).filter(Boolean);
+  function submit(){
+    setErr("");
+    if(unit==="days"){if(!from){setErr("Wybierz date poczatkowa.");return;}if(!to){setErr("Wybierz date koncowa.");return;}if(days<=0){setErr("Brak roboczych dni w zakresie.");return;}}
+    else{if(!from){setErr("Wybierz date.");return;}if(hrs<1){setErr("Minimum 1 godzina.");return;}}
+    if(over){setErr("Przekracza limit (pozostalo: "+left.toFixed(2)+" dni / "+daysToHM(left)+").");return;}
+    const base={id:"r"+Date.now(),userId:user.id,type,reason,status:initSt(user),createdAt:todayStr(),mgrCmt:"",mgrId:null};
+    if(unit==="days")onSave({...base,dateFrom:from,dateTo:to,days,hrs:null,mins:null});
+    else onSave({...base,dateFrom:from,dateTo:from,days:null,hrs,mins});
+  }
+  return (
+    <div className="max-w-lg">
+      <div className="bg-white rounded-2xl p-6 border border-slate-200 space-y-4">
+        <h2 className="text-sm font-semibold text-slate-700">Nowy wniosek urlopowy</h2>
+        {managers.length>0&&<div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-600">Po zlozeniu: powiadomienie e-mail do {managers.map(m=>m.name).join(", ")}</div>}
+        <div className="space-y-1.5">
+          {LEAVE_TYPES.map(l=>{
+            const ll=ul[l.id]||{total:l.limit||0,used:0};const hL=l.limit!=null||ll.total>0;
+            const lft=hL?parseFloat((ll.total-ll.used).toFixed(2)):null;
+            return (
+              <label key={l.id} className={"flex items-center gap-3 p-3 rounded-xl border cursor-pointer "+(type===l.id?"border-blue-500 bg-blue-50":"border-slate-200 hover:border-slate-300")}>
+                <input type="radio" name="ltype" value={l.id} checked={type===l.id} onChange={()=>setType(l.id)} className="sr-only"/>
+                <div className={"w-3 h-3 rounded-full flex-shrink-0 "+(type===l.id?"bg-blue-500":"bg-slate-300")}/>
+                <span className="text-sm text-slate-700">{l.label}</span>
+                {lft!==null&&<span className={"ml-auto text-xs px-2 py-0.5 rounded-full font-medium "+(lft>0?"bg-green-100 text-green-600":"bg-red-100 text-red-500")}>{lft} dni ({daysToHM(lft)})</span>}
+              </label>
+            );
+          })}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={()=>setUnit("days")} className={"flex-1 py-2 text-sm font-medium rounded-lg border "+(unit==="days"?"border-blue-500 bg-blue-50 text-blue-600":"border-slate-200 text-slate-500")}>Pelne dni</button>
+          <button onClick={()=>setUnit("hours")} className={"flex-1 py-2 text-sm font-medium rounded-lg border "+(unit==="hours"?"border-blue-500 bg-blue-50 text-blue-600":"border-slate-200 text-slate-500")}>Godziny</button>
+        </div>
+        {unit==="days"
+          ? <CalPicker from={from} to={to} onSelect={(f,t)=>{setFrom(f||"");setTo(t||"");}}/>
+          : (
+            <div className="space-y-3">
+              <CalPicker from={from} to={from} single onSelect={f=>setFrom(f||"")}/>
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Czas (min. 1g)</label>
+                <div className="flex gap-1">
+                  <select value={hrs} onChange={e=>setHrs(+e.target.value)} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm">{Array.from({length:HPD},(_,i)=>i+1).map(h=><option key={h} value={h}>{h}g</option>)}</select>
+                  <select value={mins} onChange={e=>setMins(+e.target.value)} disabled={hrs>=HPD} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm disabled:opacity-40">{MINS_OPTS.map(m=><option key={m} value={m}>{m}min</option>)}</select>
+                </div>
+              </div>
+            </div>
+          )
+        }
+        {unit==="days"&&from&&to&&days>0&&<div className={"rounded-lg px-3 py-2 text-sm border "+(over?"bg-red-50 border-red-200 text-red-600":"bg-blue-50 border-blue-200 text-blue-700")}>{"Dni roboczych: "+days+" ("+daysToHM(days)+")"+(over?" - przekracza limit!":"")}</div>}
+        {unit==="hours"&&from&&<div className={"rounded-lg px-3 py-2 text-sm border "+(over?"bg-red-50 border-red-200 text-red-600":"bg-blue-50 border-blue-200 text-blue-700")}>{hrs+"g"+(mins>0?" "+mins+"min":"")+" = "+equiv.toFixed(3).replace(/\.?0+$/,"")+" dnia"+(over?" - przekracza limit!":"")}</div>}
+        <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={2} placeholder="Uzasadnienie (opcjonalne)..." className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-blue-400"/>
+        {err&&<div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{err}</div>}
+        <button onClick={submit} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-xl text-sm transition-colors">Zloz wniosek</button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// APPROVAL
+// ─────────────────────────────────────────────────────────────────────
+function ApprovalPanel({user,reqs,users,patch,notify,onDecision}){
+  const [cmts,setCmts]=useState({});
+  const queue=getMgrQueue(reqs,users,user);
+  function act(req,approved){
+    const upd={...req,status:approved?"do_kadr":"odrzucony",mgrId:user.id,mgrAt:todayStr(),mgrCmt:cmts[req.id]||""};
+    patch(upd,approved?"Zatwierdzono":"Odrzucono");
+    setCmts(c=>{const n={...c};delete n[req.id];return n;});
+    onDecision(upd,approved);
+  }
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-slate-600 mb-3">Wnioski do akceptacji <Badge n={queue.length}/></h2>
+      {queue.length===0
+        ? <Empty msg="Brak wnioskow do akceptacji"/>
+        : (
+          <div className="space-y-3">
+            {queue.map(req=>{
+              const sub=users.find(u=>u.id===req.userId);
+              return (
+                <div key={req.id} className="bg-white rounded-xl p-4 border border-slate-200">
+                  <div className="flex gap-3 mb-3">
+                    <Av u={sub} sz={36}/>
+                    <div>
+                      <div className="font-medium text-sm text-slate-700">{sub?.name} <span className="text-xs text-slate-400">({getRoles(sub).join("/")})</span></div>
+                      <div className="text-xs text-slate-500">{getLT(req.type)?.label} · {fmtDur(req)} · {fmtDate(req.dateFrom)}{req.dateTo!==req.dateFrom?" - "+fmtDate(req.dateTo):""}</div>
+                      {req.reason&&<div className="text-xs text-slate-400">{req.reason}</div>}
+                    </div>
+                  </div>
+                  <input type="text" placeholder="Komentarz..." value={cmts[req.id]||""} onChange={e=>setCmts(c=>({...c,[req.id]:e.target.value}))} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:border-blue-400"/>
+                  <div className="flex gap-2">
+                    <button onClick={()=>act(req,true)} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-2 rounded-lg">Akceptuj</button>
+                    <button onClick={()=>act(req,false)} className="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 rounded-lg">Odrzuc</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      }
+    </div>
+  );
+}
+
+function MgrHistory({user,reqs,users,onDelete}){
+  const hist=getMgrHist(reqs,users,user);
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-slate-600 mb-3">Historia moich decyzji <Badge n={hist.length}/></h2>
+      {hist.length===0?<Empty msg="Brak historii"/>:<div className="space-y-2">{hist.map(r=><RCard key={r.id} req={r} users={users} onDelete={()=>onDelete(r.id)}/>)}</div>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// HR PANEL
+// ─────────────────────────────────────────────────────────────────────
+function HRPanel({reqs,users,onUpdate}){
+  const fwd=reqs.filter(r=>r.status==="do_kadr");
+  const done=reqs.filter(r=>r.status==="zrealizowany");
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-600 mb-3">Do realizacji <Badge n={fwd.length}/></h2>
+        {fwd.length===0
+          ? <Empty msg="Brak wnioskow"/>
+          : (
+            <div className="space-y-2">
+              {fwd.map(r=>{
+                const u=users.find(x=>x.id===r.userId);
+                return (
+                  <div key={r.id} className="bg-white rounded-xl p-4 border border-blue-200 flex items-center gap-3">
+                    <Av u={u} sz={36}/>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-slate-700">{u?.name}</div>
+                      <div className="text-xs text-slate-400">{getLT(r.type)?.label} · {fmtDur(r)} · {fmtDate(r.dateFrom)}{r.dateTo!==r.dateFrom?" - "+fmtDate(r.dateTo):""}</div>
+                      {r.mgrCmt&&<div className="text-xs text-green-600 bg-green-50 rounded px-2 py-0.5 mt-1">{r.mgrCmt}</div>}
+                    </div>
+                    <button onClick={()=>onUpdate({...r,status:"zrealizowany"})} className="bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg whitespace-nowrap">Zrealizuj</button>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        }
+      </div>
+      <div>
+        <h2 className="text-sm font-semibold text-slate-600 mb-2">Zrealizowane <Badge n={done.length}/></h2>
+        {done.length===0
+          ? <Empty msg="Brak"/>
+          : <div className="space-y-2">{done.map(r=><RCard key={r.id} req={r} users={users} onDelete={()=>onUpdate({...r,_del:true})}/>)}</div>
+        }
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// HM LIMIT INPUT
+// ─────────────────────────────────────────────────────────────────────
+function HMLimitInput({ltId,field,evHM,setEvHM}){
+  const parts=evHM[ltId]?.[field]||{d:0,h:0,m:0};
+  const set=upd=>setEvHM(x=>({...x,[ltId]:{...x[ltId],[field]:{...parts,...upd}}}));
+  return (
+    <div className="flex gap-1 items-end">
+      <div><div className="text-xs text-slate-400 mb-0.5">dni</div><input type="number" min={0} max={365} value={parts.d} onChange={e=>set({d:+e.target.value})} className="w-14 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center"/></div>
+      <div><div className="text-xs text-slate-400 mb-0.5">godz</div><select value={parts.h} onChange={e=>set({h:+e.target.value})} className="w-14 border border-slate-200 rounded-lg px-1 py-1.5 text-sm">{Array.from({length:HPD},(_,i)=>i).map(h=><option key={h} value={h}>{h}g</option>)}</select></div>
+      <div><div className="text-xs text-slate-400 mb-0.5">min</div><select value={parts.m} onChange={e=>set({m:+e.target.value})} className="w-16 border border-slate-200 rounded-lg px-1 py-1.5 text-sm">{MINS_OPTS.map(m=><option key={m} value={m}>{m}min</option>)}</select></div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// MANAGE PANEL
+// ─────────────────────────────────────────────────────────────────────
+function ManagePanel({reqs,users,lims,onCancel,onSaveLims}){
+  const [editing,setEditing]=useState(null);
+  const [ev,setEv]=useState({});
+  const [evHM,setEvHM]=useState({});
+  const cancellable=reqs.filter(r=>["do_kadr","zrealizowany"].includes(r.status));
+  const sortedUsers=[...users].sort(byLastName);
+
+  function openEdit(uid){
+    const base=JSON.parse(JSON.stringify(lims[uid]||mkLimits()));
+    setEv(base);
+    const hm={};
+    HMIN_TYPES.forEach(t=>{const v=base[t]||{total:0,used:0};hm[t]={total:toPartsHM(v.total),used:toPartsHM(v.used)};});
+    setEvHM(hm);setEditing(uid);
+  }
+  function saveEdit(){
+    const finalEv={...ev};
+    HMIN_TYPES.forEach(t=>{
+      if(evHM[t]){const{total:tot,used:usd}=evHM[t];finalEv[t]={total:fromPartsHM(tot.d,tot.h,tot.m),used:fromPartsHM(usd.d,usd.h,usd.m)};}
+    });
+    onSaveLims({...lims,[editing]:finalEv});setEditing(null);
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-600 mb-3">Limity urlopowe</h2>
+        <div className="space-y-2">
+          {sortedUsers.map(u=>{
+            const ul=lims[u.id]||mkLimits();
+            return (
+              <div key={u.id} className="bg-white rounded-xl p-4 border border-slate-200">
+                <div className="flex items-center gap-3 mb-2">
+                  <Av u={u} sz={36}/>
+                  <div className="flex-1"><div className="text-sm font-medium text-slate-700">{u.name}</div><div className="text-xs text-slate-400">{getRoles(u).join("/")} · {u.team}</div></div>
+                  <button onClick={()=>openEdit(u.id)} className="text-xs px-3 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-500">Edytuj</button>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {LEAVE_TYPES.map(lt=>{
+                    const lim=ul[lt.id]||{total:0,used:0};const left=parseFloat((lim.total-lim.used).toFixed(2));const inf=lim.total===0;
+                    return (
+                      <div key={lt.id} className="text-center">
+                        <div className="text-xs text-slate-400 truncate">{lt.label.split(" ").pop()}</div>
+                        <div className={"text-xs font-bold "+(inf?"text-slate-300":left===0?"text-red-500":left<=2?"text-amber-500":"text-slate-700")}>{inf?"inf":left+"d"}</div>
+                        {!inf&&<div className="text-xs text-blue-500">{daysToHM(left)}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div>
+        <h2 className="text-sm font-semibold text-slate-600 mb-3">Anulowanie urlopow <Badge n={cancellable.length}/></h2>
+        {cancellable.length===0
+          ? <Empty msg="Brak"/>
+          : (
+            <div className="space-y-2">
+              {cancellable.map(r=>{
+                const u=users.find(x=>x.id===r.userId);const st=ST[r.status];
+                return (
+                  <div key={r.id} className="bg-white rounded-xl p-4 border border-slate-200 flex items-center gap-3">
+                    <Av u={u} sz={36}/>
+                    <div className="flex-1"><div className="text-sm font-medium text-slate-700">{u?.name}</div><div className="text-xs text-slate-400">{getLT(r.type)?.label} · {fmtDur(r)}</div>{st&&<span className={"text-xs px-1.5 py-0.5 rounded-full "+st.cls}>{st.label}</span>}</div>
+                    <button onClick={()=>onCancel(r)} className="text-xs px-3 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 whitespace-nowrap">Anuluj</button>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        }
+      </div>
+      {editing&&(
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{maxHeight:"90vh",overflowY:"auto"}}>
+            <h3 className="font-semibold text-slate-700 mb-1">Edytuj limity</h3>
+            <p className="text-xs text-slate-400 mb-4">{users.find(u=>u.id===editing)?.name} · 0 = bez limitu</p>
+            <div className="space-y-4 mb-5">
+              {LEAVE_TYPES.map(lt=>{
+                const isHM=HMIN_TYPES.includes(lt.id);
+                if(isHM){
+                  const tot=evHM[lt.id]?.total||{d:0,h:0,m:0};const usd=evHM[lt.id]?.used||{d:0,h:0,m:0};
+                  const totalDays=fromPartsHM(tot.d,tot.h,tot.m);const usedDays=fromPartsHM(usd.d,usd.h,usd.m);
+                  const left=Math.max(0,parseFloat((totalDays-usedDays).toFixed(4)));const inf=totalDays===0;
+                  return (
+                    <div key={lt.id} className="border border-blue-200 bg-blue-50 rounded-xl p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-semibold text-blue-700">{lt.label}</label>
+                        <div className="text-xs font-bold text-slate-700">{inf?"bez limitu":(left.toFixed(2)+"d ("+daysToHM(left)+")")}</div>
+                      </div>
+                      <div className="space-y-2">
+                        <div><div className="text-xs text-slate-500 font-medium mb-1">Limit</div><HMLimitInput ltId={lt.id} field="total" evHM={evHM} setEvHM={setEvHM}/></div>
+                        <div><div className="text-xs text-slate-500 font-medium mb-1">Uzyte</div><HMLimitInput ltId={lt.id} field="used" evHM={evHM} setEvHM={setEvHM}/></div>
+                      </div>
+                    </div>
+                  );
+                }
+                const v=ev[lt.id]||{total:0,used:0};
+                return (
+                  <div key={lt.id}>
+                    <label className="text-xs font-medium text-slate-500 block mb-1">{lt.label}</label>
+                    <div className="flex gap-2 items-center">
+                      <div className="flex-1"><div className="text-xs text-slate-400 mb-0.5">Limit (dni)</div><input type="number" min={0} max={365} value={v.total} onChange={e=>setEv(x=>({...x,[lt.id]:{...x[lt.id],total:+e.target.value}}))} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm"/></div>
+                      <div className="flex-1"><div className="text-xs text-slate-400 mb-0.5">Uzyte (dni)</div><input type="number" min={0} max={v.total||9999} value={v.used} onChange={e=>setEv(x=>({...x,[lt.id]:{...x[lt.id],used:+e.target.value}}))} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm"/></div>
+                      <div className="text-center pt-4 flex-shrink-0"><div className="text-xs text-slate-400">Zostalo</div><div className="text-sm font-bold">{v.total===0?"inf":Math.max(0,v.total-v.used)+"d"}</div><div className="text-xs text-blue-500">{v.total===0?"":daysToHM(Math.max(0,v.total-v.used))}</div></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>setEditing(null)} className="flex-1 border border-slate-200 text-slate-500 text-sm py-2.5 rounded-xl">Anuluj</button>
+              <button onClick={saveEdit} className="flex-1 bg-blue-600 text-white text-sm py-2.5 rounded-xl">Zapisz</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PEOPLE MANAGER
+// ─────────────────────────────────────────────────────────────────────
+function PeopleManager({users,lims,currentId,onAdd,onEdit,onDelete}){
+  const [modal,setModal]=useState(null);const [fm,setFm]=useState({name:"",team:"",roles:["pracownik"],password:"",email:"",mids:["",""]});
+  const [err,setErr]=useState("");const [confirm,setConfirm]=useState(null);const [showPw,setShowPw]=useState({});
+  const potMgrs=users.filter(u=>getRoles(u).some(r=>["przelozony","zarzad","kadry","administrator"].includes(r)));
+  function toggleRole(r){const cur=fm.roles;if(cur.includes(r)){if(cur.length>1)setFm(f=>({...f,roles:cur.filter(x=>x!==r)}));}else{if(cur.length<2)setFm(f=>({...f,roles:[...cur,r]}));}}
+  function openAdd(){setFm({name:"",team:"",roles:["pracownik"],password:"",email:"",mids:["",""]});setErr("");setModal("add");}
+  function openEditF(u){setFm({name:u.name,team:u.team,roles:getRoles(u),password:u.password||"",email:u.email||"",mids:[u.managerIds?.[0]||"",u.managerIds?.[1]||""]});setErr("");setModal(u);}
+  function submit(){
+    if(!fm.name.trim()){setErr("Podaj imie.");return;}if(!fm.team.trim()){setErr("Podaj dzial.");return;}
+    if(modal==="add"&&!fm.password){setErr("Podaj haslo.");return;}
+    const managerIds=fm.mids.filter(Boolean);
+    if(modal==="add")onAdd({id:"u"+Date.now(),name:fm.name.trim(),team:fm.team.trim(),roles:fm.roles,password:fm.password,email:fm.email.trim(),initials:getInit(fm.name),color:pickClr(users),managerIds});
+    else onEdit({...modal,name:fm.name.trim(),team:fm.team.trim(),roles:fm.roles,password:fm.password||modal.password||"",email:fm.email.trim(),initials:getInit(fm.name),managerIds});
+    setModal(null);
+  }
+  const seen=new Set();
+  const groups=["administrator","zarzad","przelozony","kadry","pracownik"].map(r=>({
+    r,
+    list:users.filter(u=>{if(seen.has(u.id)||!getRoles(u).includes(r))return false;seen.add(u.id);return true;}).sort(byLastName)
+  })).filter(g=>g.list.length>0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-600">Pracownicy <Badge n={users.length}/></h2>
+        <button onClick={openAdd} className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-xl">+ Dodaj</button>
+      </div>
+      {groups.map(g=>(
+        <div key={g.r} className="mb-5">
+          <div className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">{g.r} ({g.list.length})</div>
+          <div className="space-y-2">
+            {g.list.map(u=>{
+              const mgrs=(u.managerIds||[]).map(mid=>users.find(x=>x.id===mid)).filter(Boolean);
+              return (
+                <div key={u.id} className="bg-white rounded-xl p-4 border border-slate-200 flex items-center gap-3">
+                  <Av u={u} sz={40}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-slate-700">
+                      {u.name}
+                      {u.id===currentId&&<span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">Ty</span>}
+                      {getRoles(u).length>1&&<span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">{getRoles(u).join("+")}</span>}
+                    </div>
+                    <div className="text-xs text-slate-400">{u.team}{mgrs.length?" · "+mgrs.map(m=>m.name).join(", "):""}</div>
+                    {u.email&&<div className="text-xs text-blue-400">{u.email}</div>}
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-xs font-mono text-slate-300">{showPw[u.id]?u.password:"••••••"}</span>
+                      <button onClick={()=>setShowPw(p=>({...p,[u.id]:!p[u.id]}))} className="text-xs text-slate-300 hover:text-slate-500 ml-1">{showPw[u.id]?"Ukryj":"Pokaz"}</button>
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5 flex-shrink-0">
+                    <button onClick={()=>openEditF(u)} className="text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-500">Edytuj</button>
+                    {u.id!==currentId&&<button onClick={()=>setConfirm(u)} className="text-xs px-2.5 py-1.5 border border-red-200 rounded-lg hover:bg-red-50 text-red-400">Usun</button>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {modal&&(
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{maxHeight:"90vh",overflowY:"auto"}}>
+            <h3 className="font-semibold text-slate-700 mb-4">{modal==="add"?"Dodaj pracownika":"Edytuj pracownika"}</h3>
+            <div className="space-y-3">
+              <FI label="Imie i nazwisko" val={fm.name} set={v=>setFm(f=>({...f,name:v}))} ph="np. Jan Kowalski"/>
+              <FI label="Dzial" val={fm.team} set={v=>setFm(f=>({...f,team:v}))} ph="np. IT"/>
+              <FI label="Email" val={fm.email} set={v=>setFm(f=>({...f,email:v}))} ph="jan@firma.pl"/>
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1.5">Role (maks. 2)</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {ROLE_DEFS.map(r=>{const sel=fm.roles.includes(r.id);const dis=!sel&&fm.roles.length>=2;return(<button key={r.id} onClick={()=>!dis&&toggleRole(r.id)} className={"p-2 rounded-lg border text-xs "+(sel?"border-blue-500 bg-blue-50 text-blue-700":dis?"border-slate-100 text-slate-300 cursor-default":"border-slate-200 text-slate-500")}>{r.l}</button>);})}
+                </div>
+              </div>
+              {[0,1].map(i=>(
+                <div key={i}>
+                  <label className="text-xs font-medium text-slate-500 block mb-1.5">Przelozony {i+1}</label>
+                  <select value={fm.mids[i]} onChange={e=>setFm(f=>({...f,mids:f.mids.map((v,j)=>j===i?e.target.value:v)}))} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400">
+                    <option value="">-- brak --</option>
+                    {potMgrs.filter(m=>m.id!==fm.mids[i===0?1:0]).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </div>
+              ))}
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1.5">{modal==="add"?"Haslo":"Nowe haslo (puste = bez zmian)"}</label>
+                <input type="text" value={fm.password} onChange={e=>setFm(f=>({...f,password:e.target.value}))} placeholder={modal==="add"?"min. 4 znaki":"Pozostaw puste"} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono"/>
+              </div>
+              {err&&<div className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{err}</div>}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={()=>setModal(null)} className="flex-1 border border-slate-200 text-slate-500 text-sm font-medium py-2.5 rounded-xl">Anuluj</button>
+              <button onClick={submit} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5 rounded-xl">{modal==="add"?"Dodaj":"Zapisz"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirm&&(
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-2xl text-center">
+            <h3 className="font-semibold text-slate-700 mb-1">Usun pracownika?</h3>
+            <p className="text-sm text-slate-400 mb-5">{confirm.name}</p>
+            <div className="flex gap-2">
+              <button onClick={()=>setConfirm(null)} className="flex-1 border border-slate-200 text-slate-500 text-sm py-2.5 rounded-xl">Anuluj</button>
+              <button onClick={()=>{onDelete(confirm.id);setConfirm(null);}} className="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm py-2.5 rounded-xl">Usun</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ALL REQS
+// ─────────────────────────────────────────────────────────────────────
+function AllReqs({reqs,users,canDelete,onDelete}){
+  const [f,setF]=useState("all");const [confirmId,setConfirmId]=useState(null);
+  const shown=f==="all"?reqs:reqs.filter(r=>r.status===f);
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-slate-600">Wszystkie wnioski <Badge n={reqs.length}/></h2>
+        <select value={f} onChange={e=>setF(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-2 py-1.5">
+          <option value="all">Wszystkie</option>
+          {Object.entries(ST).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+        </select>
+      </div>
+      <div className="space-y-2">{shown.map(r=><RCard key={r.id} req={r} users={users} onDelete={canDelete?()=>setConfirmId(r.id):null}/>)}</div>
+      {shown.length===0&&<Empty msg="Brak wnioskow"/>}
+      {confirmId&&(
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-2xl text-center">
+            <h3 className="font-semibold text-slate-700 mb-1">Usunac wniosek?</h3>
+            <p className="text-sm text-slate-400 mb-5">Tej operacji nie mozna cofnac.</p>
+            <div className="flex gap-2">
+              <button onClick={()=>setConfirmId(null)} className="flex-1 border border-slate-200 text-slate-500 text-sm py-2.5 rounded-xl">Anuluj</button>
+              <button onClick={()=>{onDelete(confirmId);setConfirmId(null);}} className="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm py-2.5 rounded-xl">Usun</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TEAM CALENDAR
+// ─────────────────────────────────────────────────────────────────────
+function TeamCal({reqs,users}){
+  const now=new Date();const [yr,setYr]=useState(now.getFullYear());const [mo,setMo]=useState(now.getMonth());const [sel,setSel]=useState(null);
+  const first=new Date(yr,mo,1),total=new Date(yr,mo+1,0).getDate(),startDow=(first.getDay()+6)%7;
+  const approved=reqs.filter(r=>["do_kadr","zrealizowany"].includes(r.status));
+  const cells=[...Array(startDow).fill(null),...Array.from({length:total},(_,i)=>i+1)];
+  const holidays=getHolidays(yr);
+  function getAbs(d){const ds=yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");return approved.filter(r=>r.dateFrom<=ds&&r.dateTo>=ds);}
+  function clickDay(d){const ds=yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");setSel({ds,abs:getAbs(d),holiday:holidays[ds]});}
+  return (
+    <div>
+      <div className="bg-white rounded-2xl border border-slate-200 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <button onClick={()=>{if(mo===0){setYr(y=>y-1);setMo(11);}else setMo(m=>m-1);}} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500">&#9664;</button>
+          <h2 className="font-semibold text-slate-700">{MONTHS[mo]} {yr}</h2>
+          <button onClick={()=>{if(mo===11){setYr(y=>y+1);setMo(0);}else setMo(m=>m+1);}} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500">&#9654;</button>
+        </div>
+        <div className="flex gap-3 mb-3 text-xs text-slate-400 flex-wrap">
+          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-red-100 border border-red-300"/>Swieto</div>
+          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-slate-100"/>Weekend</div>
+          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-blue-100 border border-blue-200"/>Urlop</div>
+          <span className="text-slate-300">· kliknij dzien aby zobaczyc szczegoly</span>
+        </div>
+        <div className="grid grid-cols-7 gap-0.5 mb-1">
+          {DOWS.map(d=><div key={d} className={"text-center text-xs py-1 font-medium "+(d==="Sb"||d==="Nd"?"text-slate-300":"text-slate-400")}>{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-0.5">
+          {cells.map((d,i)=>{
+            if(!d)return <div key={i}/>;
+            const ds=yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+            const abs=getAbs(d),dow=(startDow+d-1)%7,isWe=dow>=5,holiday=holidays[ds],isSelected=sel?.ds===ds;
+            const bgCls=isSelected?"bg-blue-600 border-blue-600":holiday?"bg-red-50 border-red-200 hover:bg-red-100":isWe?"bg-slate-50 border-slate-100":abs.length>0?"bg-blue-50 border-blue-200 hover:bg-blue-100":"bg-white border-slate-100 hover:bg-slate-50";
+            const txtCls=isSelected?"text-white":holiday?"text-red-600":isWe?"text-slate-300":"text-slate-500";
+            return (
+              <div key={i} onClick={()=>clickDay(d)} className={"min-h-16 p-1 rounded-lg border cursor-pointer transition-colors "+bgCls} title={holiday||""}>
+                <div className={"text-xs font-medium mb-0.5 "+txtCls}>{d}</div>
+                {holiday&&<div style={{fontSize:"8px"}} className={isSelected?"text-blue-100 font-medium leading-tight truncate":"text-red-500 font-medium leading-tight truncate"}>{holiday}</div>}
+                {abs.slice(0,2).map(r=>{const u=users.find(u=>u.id===r.userId);return <div key={r.id} style={{background:isSelected?"rgba(255,255,255,0.3)":u?.color||"#94a3b8",fontSize:"9px"}} className="px-1 rounded text-white truncate mb-0.5">{u?.initials}</div>;})}
+                {abs.length>2&&<div className={isSelected?"text-blue-100 text-xs":"text-slate-400 text-xs"}>+{abs.length-2}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {sel&&(
+        <div className="mt-4 bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="font-semibold text-slate-700">{fmtDate(sel.ds)}</h3>
+              {sel.holiday&&<div className="text-xs text-red-500 font-medium">&#127477;&#127473; {sel.holiday}</div>}
+            </div>
+            <button onClick={()=>setSel(null)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+          </div>
+          {sel.abs.length===0
+            ? <div className="text-sm text-slate-400 text-center py-4">Brak urlopow w tym dniu</div>
+            : (
+              <div>
+                <div className="text-xs text-slate-400 mb-2">Nieobecni: <strong className="text-slate-600">{sel.abs.length}</strong></div>
+                <div className="space-y-2">
+                  {sel.abs.map(r=>{
+                    const u=users.find(x=>x.id===r.userId);const lt=getLT(r.type);const st=ST[r.status];
+                    return (
+                      <div key={r.id} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100">
+                        <Av u={u} sz={36}/>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-slate-700">{u?.name}</div>
+                          <div className="text-xs text-slate-400">{u?.team} · {lt?.label}</div>
+                          <div className="text-xs text-slate-400">{fmtDate(r.dateFrom)}{r.dateTo!==r.dateFrom?" - "+fmtDate(r.dateTo):""} · {fmtDur(r)}</div>
+                        </div>
+                        {st&&<span className={"text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 "+st.cls}>{st.label}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// UWAGI PANEL
+// ─────────────────────────────────────────────────────────────────────
+function UwagiPanel({user,users,uwagi,onSubmit,onMarkRead,onDelete}){
+  const [text,setText]=useState("");const [err,setErr]=useState("");
+  const isAdmin=hasR(user,"administrator");
+  const myUwagi=[...uwagi].filter(w=>w.userId===user.id).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  const allUwagi=[...uwagi].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  const unreadIds=uwagi.filter(w=>!w.readByAdmin).map(w=>w.id);
+  useEffect(()=>{if(isAdmin&&unreadIds.length>0)onMarkRead(unreadIds);},[]);
+  function submit(){
+    if(!text.trim()){setErr("Wpisz tresc uwagi.");return;}
+    onSubmit(text.trim());setText("");setErr("");
+  }
+  return (
+    <div className="max-w-xl space-y-5">
+      <div className="bg-white rounded-2xl p-5 border border-slate-200">
+        <h2 className="text-sm font-semibold text-slate-700 mb-1">Wyslij uwage do administratora</h2>
+        <p className="text-xs text-slate-400 mb-3">Administrator otrzyma powiadomienie o Twojej uwadze.</p>
+        <textarea value={text} onChange={e=>{setText(e.target.value);setErr("");}} rows={4} placeholder="Wpisz swoja uwage, sugestie lub problem..." className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:border-blue-400 mb-2"/>
+        {err&&<div className="text-xs text-red-500 mb-2">{err}</div>}
+        <button onClick={submit} disabled={!text.trim()} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-medium py-2.5 rounded-xl text-sm">Wyslij uwage</button>
+      </div>
+      {isAdmin&&(
+        <div>
+          <h2 className="text-sm font-semibold text-slate-600 mb-3">Wszystkie uwagi <Badge n={allUwagi.length}/></h2>
+          {allUwagi.length===0
+            ? <Empty msg="Brak uwag"/>
+            : (
+              <div className="space-y-2">
+                {allUwagi.map(w=>{
+                  const sender=users.find(u=>u.id===w.userId);
+                  return (
+                    <div key={w.id} className={"bg-white rounded-xl p-4 border "+(w.readByAdmin?"border-slate-200":"border-blue-300 bg-blue-50")}>
+                      <div className="flex items-start gap-3">
+                        <Av u={sender} sz={36}/>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-slate-700">{sender?.name}</span>
+                            <span className="text-xs text-slate-400">{sender?.team}</span>
+                            <span className="text-xs text-slate-300">{fmtDate(w.createdAt)}</span>
+                            {!w.readByAdmin&&<span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded-full">Nowe</span>}
+                          </div>
+                          <p className="text-sm text-slate-600 mt-1 leading-relaxed">{w.text}</p>
+                        </div>
+                        <button onClick={()=>onDelete(w.id)} className="text-slate-300 hover:text-red-500 font-bold flex-shrink-0 ml-2">✕</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          }
+        </div>
+      )}
+      {!isAdmin&&myUwagi.length>0&&(
+        <div>
+          <h2 className="text-sm font-semibold text-slate-600 mb-3">Moje wyslane uwagi <Badge n={myUwagi.length}/></h2>
+          <div className="space-y-2">
+            {myUwagi.map(w=>(
+              <div key={w.id} className="bg-white rounded-xl p-4 border border-slate-200 flex items-start gap-3">
+                <span className="text-xl flex-shrink-0 mt-0.5">💬</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-slate-600 leading-relaxed">{w.text}</p>
+                  <div className="text-xs text-slate-400 mt-1">{fmtDate(w.createdAt)}</div>
+                </div>
+                <button onClick={()=>onDelete(w.id)} className="text-slate-300 hover:text-red-500 font-bold flex-shrink-0">✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SHARED COMPONENTS
+// ─────────────────────────────────────────────────────────────────────
+function RCard({req,users,onCancel,onDelete}){
+  const lt=getLT(req.type);
+  const st=ST[req.status]||{};
+  const reqUser=users?users.find(u=>u.id===req.userId):null;
+  const approver=users&&req.mgrId?users.find(u=>u.id===req.mgrId):null;
+  const wasApproved=approver&&req.status!=="odrzucony";
+  const wasRejected=approver&&req.status==="odrzucony";
+  return (
+    <div className="bg-white rounded-xl p-4 border border-slate-200 flex items-start gap-3">
+      {reqUser&&<Av u={reqUser} sz={32}/>}
+      <span className="text-xl mt-0.5">{st.icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          {reqUser&&<span className="text-sm font-medium text-slate-700">{reqUser.name} ·</span>}
+          <span className="text-sm text-slate-700">{lt?.label}</span>
+          <span className={"text-xs px-2 py-0.5 rounded-full font-medium "+st.cls}>{st.label}</span>
+        </div>
+        <div className="text-xs text-slate-500 mt-0.5">{fmtDate(req.dateFrom)}{req.dateTo&&req.dateTo!==req.dateFrom?" - "+fmtDate(req.dateTo):""} · {fmtDur(req)}</div>
+        {req.reason&&<div className="text-xs text-slate-400 truncate">{req.reason}</div>}
+        {wasApproved&&(
+          <div className="text-xs text-green-700 bg-green-50 rounded px-2 py-0.5 mt-1">
+            Zaakceptowane przez <strong>{approver.name}</strong>{req.mgrCmt?" · "+req.mgrCmt:""}
+          </div>
+        )}
+        {wasRejected&&(
+          <div className="text-xs text-red-600 bg-red-50 rounded px-2 py-0.5 mt-1">
+            Odrzucone przez <strong>{approver.name}</strong>{req.mgrCmt?" · "+req.mgrCmt:""}
+          </div>
+        )}
+        {!approver&&req.mgrCmt&&<div className="text-xs text-green-600 bg-green-50 rounded px-2 py-0.5 mt-1">{req.mgrCmt}</div>}
+      </div>
+      <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
+        <div className="text-xs text-slate-300">{fmtDate(req.createdAt)}</div>
+        {onCancel&&<button onClick={()=>onCancel(req)} className="text-xs text-orange-400 hover:text-orange-600 underline">Wycofaj</button>}
+        {onDelete&&<button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 underline">Usun</button>}
+      </div>
+    </div>
+  );
+}
+
+function Av({u,sz}){const s=(sz||32)+"px",fs=(sz||32)<=32?"10px":"12px";if(!u)return <div style={{width:s,height:s}} className="rounded-full bg-slate-200 flex-shrink-0"/>;return <div style={{width:s,height:s,background:u.color,fontSize:fs}} className="rounded-full flex items-center justify-center text-white font-bold flex-shrink-0">{u.initials}</div>;}
+function FI({label,val,set,ph}){return <div><label className="text-xs font-medium text-slate-500 block mb-1.5">{label}</label><input type="text" value={val} onChange={e=>set(e.target.value)} placeholder={ph} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400"/></div>;}
+function Badge({n}){if(!n||n<=0)return null;return <span className="inline-flex items-center justify-center w-5 h-5 text-xs font-bold bg-blue-100 text-blue-600 rounded-full ml-1">{n}</span>;}
+function Empty({msg}){return <div className="bg-white rounded-xl p-6 text-center text-sm text-slate-400 border border-slate-200">{msg}</div>;}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
