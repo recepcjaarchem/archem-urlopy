@@ -233,6 +233,15 @@ function App(){
     if(approved&&emp&&kl.length>0)items.push(mailToKadry(req,emp,user,kl));
     if(emp)items.push(mailToEmp(req,emp,user,approved));
     if(items.length>0)setMail({items,label:approved?"Wyslij powiadomienia":"Powiadom pracownika"});
+    // Odrzucony wniosek — zwrot dni do puli
+    if(!approved){
+      const lt=getLT(req.type);
+      if(lt&&ref.current.lims[req.userId]?.[req.type]){
+        const nl=JSON.parse(JSON.stringify(ref.current.lims));
+        nl[req.userId][req.type].used=Math.max(0,parseFloat(((nl[req.userId][req.type].used||0)-calcDeduct(req)).toFixed(4)));
+        setLims(nl);
+      }
+    }
     if(emp){
       const lt=getLT(req.type);
       const msg=approved
