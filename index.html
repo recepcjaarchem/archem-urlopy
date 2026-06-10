@@ -110,7 +110,15 @@ function workdays(a,b){
   while(d<=e){const w=d.getDay(),ds=dsStr(d);if(w!==0&&w!==6&&!h[ds])c++;d.setDate(d.getDate()+1);}
   return c;
 }
-function fmtDur(r){if(r.hrs!=null){const m=r.mins||0;return m>0?r.hrs+"g "+m+"min":r.hrs+"g";}return r.days+" "+(r.days===1?"dzien":"dni");}
+function fmtDur(r){
+  if(r.hrs!=null){
+    const m=r.mins||0;
+    const dur=m>0?r.hrs+"g "+m+"min":r.hrs+"g";
+    if(r.timeFrom&&r.timeTo)return r.timeFrom+" – "+r.timeTo+" ("+dur+")";
+    return dur;
+  }
+  return r.days+" "+(r.days===1?"dzien":"dni");
+}
 function calcDeduct(r){if(r.hrs!=null)return(r.hrs+(r.mins||0)/60)/HPD;return r.days||0;}
 function daysToHM(days){if(!days&&days!==0)return "0g";const tm=Math.round(days*HPD*60),h=Math.floor(tm/60),m=tm%60;return m>0?h+"g "+m+"min":h+"g";}
 function toPartsHM(td){const tm=Math.round(td*HPD*60),d=Math.floor(tm/(HPD*60)),r=tm%(HPD*60),h=Math.floor(r/60),m=r%60;return{d,h,m};}
@@ -527,25 +535,33 @@ function NewReq({user,lims,users,onSave}){
   const [type,setType]=useState("wypoczynkowy");
   const [unit,setUnit]=useState("days");
   const [from,setFrom]=useState("");const [to,setTo]=useState("");
-  const [hrs,setHrs]=useState(1);const [mins,setMins]=useState(0);
+  const [timeFrom,setTimeFrom]=useState("08:00");
+  const [timeTo,setTimeTo]=useState("16:00");
   const [reason,setReason]=useState("");const [err,setErr]=useState("");
   const ul=lims[user.id]||{};const lt=getLT(type);
   const limEntry=ul[type]||{total:lt?.limit||0,used:0};
   const hasLimit=lt&&(lt.limit!=null||limEntry.total>0);
   const left=hasLimit?parseFloat((limEntry.total-limEntry.used).toFixed(4)):null;
   const days=(unit==="days"&&from&&to)?workdays(from,to):0;
-  const equiv=unit==="hours"?(hrs+(mins||0)/60)/HPD:days;
+  const tdRaw=(()=>{const [fh,fm]=timeFrom.split(":").map(Number);const [th,tm]=timeTo.split(":").map(Number);return(th*60+tm)-(fh*60+fm);})();
+  const tdValid=tdRaw>0;
+  const tdHrs=Math.floor(Math.max(0,tdRaw)/60);
+  const tdMin=Math.max(0,tdRaw)%60;
+  const equiv=unit==="hours"?(tdValid?(tdHrs+tdMin/60)/HPD:0):days;
   const over=left!==null&&left>0&&equiv>left;
   const managers=(user.managerIds||[]).map(mid=>users.find(u=>u.id===mid)).filter(Boolean);
+  const HOURS=Array.from({length:13},(_,i)=>String(i+6).padStart(2,"0"));
+
   function submit(){
     setErr("");
     if(unit==="days"){if(!from){setErr("Wybierz date poczatkowa.");return;}if(!to){setErr("Wybierz date koncowa.");return;}if(days<=0){setErr("Brak roboczych dni w zakresie.");return;}}
-    else{if(!from){setErr("Wybierz date.");return;}if(hrs<1){setErr("Minimum 1 godzina.");return;}}
+    else{if(!from){setErr("Wybierz date.");return;}if(!tdValid){setErr("Godzina 'do' musi byc pozniej niz 'od'.");return;}}
     if(over){setErr("Przekracza limit (pozostalo: "+left.toFixed(2)+" dni / "+daysToHM(left)+").");return;}
     const base={id:"r"+Date.now(),userId:user.id,type,reason,status:initSt(user),createdAt:todayStr(),mgrCmt:"",mgrId:null};
-    if(unit==="days")onSave({...base,dateFrom:from,dateTo:to,days,hrs:null,mins:null});
-    else onSave({...base,dateFrom:from,dateTo:from,days:null,hrs,mins});
+    if(unit==="days")onSave({...base,dateFrom:from,dateTo:to,days,hrs:null,mins:null,timeFrom:null,timeTo:null});
+    else onSave({...base,dateFrom:from,dateTo:from,days:null,hrs:tdHrs,mins:tdMin,timeFrom,timeTo});
   }
+
   return (
     <div className="max-w-lg">
       <div className="bg-white rounded-2xl p-6 border border-slate-200 space-y-4">
@@ -574,18 +590,40 @@ function NewReq({user,lims,users,onSave}){
           : (
             <div className="space-y-3">
               <CalPicker from={from} to={from} single onSelect={f=>setFrom(f||"")}/>
-              <div>
-                <label className="text-xs font-medium text-slate-500 block mb-1">Czas (min. 1g)</label>
-                <div className="flex gap-1">
-                  <select value={hrs} onChange={e=>setHrs(+e.target.value)} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm">{Array.from({length:HPD},(_,i)=>i+1).map(h=><option key={h} value={h}>{h}g</option>)}</select>
-                  <select value={mins} onChange={e=>setMins(+e.target.value)} disabled={hrs>=HPD} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm disabled:opacity-40">{MINS_OPTS.map(m=><option key={m} value={m}>{m}min</option>)}</select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-500 block mb-1">Od godziny</label>
+                  <div className="flex gap-1">
+                    <select value={timeFrom.split(":")[0]} onChange={e=>setTimeFrom(e.target.value+":"+timeFrom.split(":")[1])} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm">
+                      {HOURS.map(h=><option key={h} value={h}>{h}</option>)}
+                    </select>
+                    <select value={timeFrom.split(":")[1]} onChange={e=>setTimeFrom(timeFrom.split(":")[0]+":"+e.target.value)} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm">
+                      {MINS_OPTS.map(m=><option key={m} value={String(m).padStart(2,"0")}>{String(m).padStart(2,"0")}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 block mb-1">Do godziny</label>
+                  <div className="flex gap-1">
+                    <select value={timeTo.split(":")[0]} onChange={e=>setTimeTo(e.target.value+":"+timeTo.split(":")[1])} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm">
+                      {HOURS.map(h=><option key={h} value={h}>{h}</option>)}
+                    </select>
+                    <select value={timeTo.split(":")[1]} onChange={e=>setTimeTo(timeTo.split(":")[0]+":"+e.target.value)} className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm">
+                      {MINS_OPTS.map(m=><option key={m} value={String(m).padStart(2,"0")}>{String(m).padStart(2,"0")}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
+              {tdValid
+                ? <div className={"rounded-lg px-3 py-2 text-sm border font-medium "+(over?"bg-red-50 border-red-200 text-red-600":"bg-blue-50 border-blue-200 text-blue-700")}>
+                    {timeFrom} – {timeTo} = {tdHrs}g{tdMin>0?" "+tdMin+"min":""} ({equiv.toFixed(2).replace(/\.?0+$/,"")} dnia){over?" · przekracza limit!":""}
+                  </div>
+                : <div className="rounded-lg px-3 py-1.5 text-xs border bg-amber-50 border-amber-200 text-amber-600">Godzina "do" musi byc pozniej niz "od"</div>
+              }
             </div>
           )
         }
         {unit==="days"&&from&&to&&days>0&&<div className={"rounded-lg px-3 py-2 text-sm border "+(over?"bg-red-50 border-red-200 text-red-600":"bg-blue-50 border-blue-200 text-blue-700")}>{"Dni roboczych: "+days+" ("+daysToHM(days)+")"+(over?" - przekracza limit!":"")}</div>}
-        {unit==="hours"&&from&&<div className={"rounded-lg px-3 py-2 text-sm border "+(over?"bg-red-50 border-red-200 text-red-600":"bg-blue-50 border-blue-200 text-blue-700")}>{hrs+"g"+(mins>0?" "+mins+"min":"")+" = "+equiv.toFixed(3).replace(/\.?0+$/,"")+" dnia"+(over?" - przekracza limit!":"")}</div>}
         <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={2} placeholder="Uzasadnienie (opcjonalne)..." className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-blue-400"/>
         {err&&<div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{err}</div>}
         <button onClick={submit} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-xl text-sm transition-colors">Zloz wniosek</button>
