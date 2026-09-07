@@ -835,8 +835,8 @@ function ManagePanel({reqs,users,lims,onCancel,onSaveLims}){
                     return (
                       <div key={lt.id} className="text-center">
                         <div className="text-xs text-slate-400 truncate">{lt.label.split(" ").pop()}</div>
-                        <div className={"text-xs font-bold "+(inf?"text-slate-300":left===0?"text-red-500":left<=2?"text-amber-500":"text-slate-700")}>{inf?"inf":left+"d"}</div>
-                        {!inf&&<div className="text-xs text-blue-500">{daysToHM(left)}</div>}
+                        <div className={"text-xs font-bold "+(inf?"text-slate-300":left===0?"text-red-500":left<=2?"text-amber-500":"text-slate-700")}>{inf?"inf":Math.floor(left)+"d"}</div>
+                        {!inf&&<div className="text-xs text-blue-500 leading-tight">{fmtDaysFull(left)}</div>}
                       </div>
                     );
                   })}
@@ -882,7 +882,7 @@ function ManagePanel({reqs,users,lims,onCancel,onSaveLims}){
                     <div key={lt.id} className="border border-blue-200 bg-blue-50 rounded-xl p-3">
                       <div className="flex items-center justify-between mb-2">
                         <label className="text-xs font-semibold text-blue-700">{lt.label}</label>
-                        <div className="text-xs font-bold text-slate-700">{inf?"bez limitu":(left.toFixed(2)+"d ("+daysToHM(left)+")")}</div>
+                        <div className="text-xs font-bold text-slate-700">{inf?"bez limitu":fmtDaysFull(left)}</div>
                       </div>
                       <div className="space-y-2">
                         <div><div className="text-xs text-slate-500 font-medium mb-1">Limit</div><HMLimitInput ltId={lt.id} field="total" evHM={evHM} setEvHM={setEvHM}/></div>
@@ -898,7 +898,7 @@ function ManagePanel({reqs,users,lims,onCancel,onSaveLims}){
                     <div className="flex gap-2 items-center">
                       <div className="flex-1"><div className="text-xs text-slate-400 mb-0.5">Limit (dni)</div><input type="number" min={0} max={365} value={v.total} onChange={e=>setEv(x=>({...x,[lt.id]:{...x[lt.id],total:+e.target.value}}))} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm"/></div>
                       <div className="flex-1"><div className="text-xs text-slate-400 mb-0.5">Uzyte (dni)</div><input type="number" min={0} max={v.total||9999} value={v.used} onChange={e=>setEv(x=>({...x,[lt.id]:{...x[lt.id],used:+e.target.value}}))} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm"/></div>
-                      <div className="text-center pt-4 flex-shrink-0"><div className="text-xs text-slate-400">Zostalo</div><div className="text-sm font-bold">{v.total===0?"inf":Math.max(0,v.total-v.used)+"d"}</div><div className="text-xs text-blue-500">{v.total===0?"":daysToHM(Math.max(0,v.total-v.used))}</div></div>
+                      <div className="text-center pt-4 flex-shrink-0"><div className="text-xs text-slate-400">Zostalo</div><div className="text-sm font-bold">{v.total===0?"inf":Math.floor(Math.max(0,v.total-v.used))+"d"}</div><div className="text-xs text-blue-500 leading-tight">{v.total===0?"":fmtDaysFull(Math.max(0,v.total-v.used))}</div></div>
                     </div>
                   </div>
                 );
