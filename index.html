@@ -48,10 +48,16 @@ function workHoursFor(dateStr){
   return WORK_HOURS[dow]||WORK_HOURS[1];
 }
 function minsBetween(a,b){const[ah,am]=a.split(":").map(Number);const[bh,bm]=b.split(":").map(Number);return(bh*60+bm)-(ah*60+am);}
+// Zaokraglenie do pelnych 15 minut
+function roundQ(days){
+  if(days==null)return 0;
+  const q=Math.round(days*HPD*4)/(HPD*4);
+  return parseFloat(q.toFixed(6));
+}
 // Format: 11.94 dni -> "11 dni 7g 30min"
 function fmtDaysFull(days){
   if(days==null)return "0 dni";
-  const totalMins=Math.round(days*HPD*60);
+  const totalMins=Math.round(roundQ(days)*HPD*60/15)*15;
   const d=Math.floor(totalMins/(HPD*60));
   const rest=totalMins%(HPD*60);
   const h=Math.floor(rest/60);
@@ -164,13 +170,13 @@ function fmtDur(r){
   return dayTxt;
 }
 function calcDeduct(r){
-  if(r.hrs!=null)return(r.hrs+(r.mins||0)/60)/HPD;
-  if(r.totalMins)return r.totalMins/60/HPD;
-  return r.days||0;
+  if(r.hrs!=null)return roundQ((r.hrs+(r.mins||0)/60)/HPD);
+  if(r.totalMins)return roundQ(r.totalMins/60/HPD);
+  return roundQ(r.days||0);
 }
 function daysToHM(days){if(!days&&days!==0)return "0g";const tm=Math.round(days*HPD*60),h=Math.floor(tm/60),m=tm%60;return m>0?h+"g "+m+"min":h+"g";}
-function toPartsHM(td){const tm=Math.round(td*HPD*60),d=Math.floor(tm/(HPD*60)),r=tm%(HPD*60),h=Math.floor(r/60),m=r%60;return{d,h,m};}
-function fromPartsHM(d,h,m){return d+h/HPD+m/(HPD*60);}
+function toPartsHM(td){const tm=Math.round(roundQ(td)*HPD*60/15)*15,d=Math.floor(tm/(HPD*60)),r=tm%(HPD*60),h=Math.floor(r/60),m=r%60;return{d,h,m};}
+function fromPartsHM(d,h,m){return roundQ(d+h/HPD+m/(HPD*60));}
 function getMgrQueue(reqs,users,mgr){return reqs.filter(r=>r.status==="zlozony"&&(users.find(u=>u.id===r.userId)?.managerIds||[]).includes(mgr.id));}
 function getMgrHist(reqs,users,mgr){return reqs.filter(r=>{if(!["odrzucony","do_kadr","zrealizowany","anulowany"].includes(r.status))return false;const sub=users.find(u=>u.id===r.userId);return r.mgrId===mgr.id||(sub?.managerIds||[]).includes(mgr.id);});}
 function buildMailto(emails,subject,lines){const to=emails.filter(Boolean).join(",");if(!to)return null;return "mailto:"+to+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(lines.map(l=>l==null?"":l).join("\r\n"));}
@@ -268,7 +274,7 @@ function App(){
     const lt=getLT(req.type);
     if(lt&&ref.current.lims[req.userId]?.[req.type]){
       const nl=JSON.parse(JSON.stringify(ref.current.lims));
-      nl[req.userId][req.type].used=Math.max(0,parseFloat(((nl[req.userId][req.type].used||0)-calcDeduct(req)).toFixed(4)));
+      nl[req.userId][req.type].used=Math.max(0,roundQ((nl[req.userId][req.type].used||0)-calcDeduct(req)));
       setLims(nl);
     }
   };
@@ -294,7 +300,7 @@ function App(){
       const lt=getLT(req.type);
       if(lt&&ref.current.lims[req.userId]?.[req.type]){
         const nl=JSON.parse(JSON.stringify(ref.current.lims));
-        nl[req.userId][req.type].used=Math.max(0,parseFloat(((nl[req.userId][req.type].used||0)-calcDeduct(req)).toFixed(4)));
+        nl[req.userId][req.type].used=Math.max(0,roundQ((nl[req.userId][req.type].used||0)-calcDeduct(req)));
         setLims(nl);
       }
     }
@@ -397,7 +403,7 @@ function App(){
           <NewReq user={user} lims={lims} users={users} onSave={req=>{
             const nr=[req,...ref.current.reqs];
             const lt=getLT(req.type);let nl=ref.current.lims;
-            if(lt){nl=JSON.parse(JSON.stringify(ref.current.lims));if(!nl[req.userId])nl[req.userId]=mkLimits();if(!nl[req.userId][req.type])nl[req.userId][req.type]={total:0,used:0};nl[req.userId][req.type].used=parseFloat(((nl[req.userId][req.type].used||0)+calcDeduct(req)).toFixed(4));}
+            if(lt){nl=JSON.parse(JSON.stringify(ref.current.lims));if(!nl[req.userId])nl[req.userId]=mkLimits();if(!nl[req.userId][req.type])nl[req.userId][req.type]={total:0,used:0};nl[req.userId][req.type].used=roundQ((nl[req.userId][req.type].used||0)+calcDeduct(req));}
             setReqsS(nr);setLimsS(nl);push(ref.current.users,nr,nl,ref.current.notifs,ref.current.uwagi);
             setTab("wnioski");notify("Wniosek zlozony!");onReqSaved(req);
           }}/>
@@ -492,7 +498,7 @@ function MyReqs({user,reqs,users,lims,notifs,onCancel,onReadNotifs,onDeleteNotif
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         {LEAVE_TYPES.filter(lt=>lt.limit).map(lt=>{
           const lim=ul[lt.id]||{total:lt.limit,used:0};
-          const leftDays=parseFloat((lim.total-lim.used).toFixed(2));
+          const leftDays=roundQ(lim.total-lim.used);
           const pct=Math.min(100,lim.total>0?(lim.used/lim.total)*100:0);
           return (
             <div key={lt.id} className="bg-white rounded-xl p-3 border border-slate-200">
@@ -590,7 +596,7 @@ function NewReq({user,lims,users,onSave}){
   const ul=lims[user.id]||{};const lt=getLT(type);
   const limEntry=ul[type]||{total:lt?.limit||0,used:0};
   const hasLimit=lt&&(lt.limit!=null||limEntry.total>0);
-  const left=hasLimit?parseFloat((limEntry.total-limEntry.used).toFixed(4)):null;
+  const left=hasLimit?roundQ(limEntry.total-limEntry.used):null;
   const days=(unit==="days"&&from&&to)?workdays(from,to):0;
   const dayMins=(unit==="days"&&from&&to)?workMinutes(from,to):0;
   const tdRaw=(()=>{const [fh,fm]=timeFrom.split(":").map(Number);const [th,tm]=timeTo.split(":").map(Number);return(th*60+tm)-(fh*60+fm);})();
@@ -628,7 +634,7 @@ function NewReq({user,lims,users,onSave}){
         <div className="space-y-1.5">
           {LEAVE_TYPES.map(l=>{
             const ll=ul[l.id]||{total:l.limit||0,used:0};const hL=l.limit!=null||ll.total>0;
-            const lft=hL?parseFloat((ll.total-ll.used).toFixed(2)):null;
+            const lft=hL?roundQ(ll.total-ll.used):null;
             return (
               <label key={l.id} className={"flex items-center gap-3 p-3 rounded-xl border cursor-pointer "+(type===l.id?"border-blue-500 bg-blue-50":"border-slate-200 hover:border-slate-300")}>
                 <input type="radio" name="ltype" value={l.id} checked={type===l.id} onChange={()=>setType(l.id)} className="sr-only"/>
@@ -857,7 +863,7 @@ function ManagePanel({reqs,users,lims,onCancel,onSaveLims}){
                 </div>
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                   {LEAVE_TYPES.map(lt=>{
-                    const lim=ul[lt.id]||{total:0,used:0};const left=parseFloat((lim.total-lim.used).toFixed(2));const inf=lim.total===0;
+                    const lim=ul[lt.id]||{total:0,used:0};const left=roundQ(lim.total-lim.used);const inf=lim.total===0;
                     return (
                       <div key={lt.id} className="text-center">
                         <div className="text-xs text-slate-400 truncate">{lt.label.split(" ").pop()}</div>
@@ -903,7 +909,7 @@ function ManagePanel({reqs,users,lims,onCancel,onSaveLims}){
                 if(isHM){
                   const tot=evHM[lt.id]?.total||{d:0,h:0,m:0};const usd=evHM[lt.id]?.used||{d:0,h:0,m:0};
                   const totalDays=fromPartsHM(tot.d,tot.h,tot.m);const usedDays=fromPartsHM(usd.d,usd.h,usd.m);
-                  const left=Math.max(0,parseFloat((totalDays-usedDays).toFixed(4)));const inf=totalDays===0;
+                  const left=Math.max(0,roundQ(totalDays-usedDays));const inf=totalDays===0;
                   return (
                     <div key={lt.id} className="border border-blue-200 bg-blue-50 rounded-xl p-3">
                       <div className="flex items-center justify-between mb-2">
